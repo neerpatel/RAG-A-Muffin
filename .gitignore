@@ -59,8 +59,9 @@ packages/
 **/Generated/
 *.swagger.json
 
-# ── Planning docs ────────────────────────────────────────────────────────────
+# ── Planning docs / local tooling ────────────────────────────────────────────
 PLAN.md
+.claude/
 
 # ── Temp / scratch ────────────────────────────────────────────────────────────
 *.tmp
