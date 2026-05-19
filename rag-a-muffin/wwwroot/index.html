@@ -3851,7 +3851,7 @@
     }, 3000);
   }
 
-  function renderStatusPanel(s) {
+  function _renderStatusPanelCore(s) {
     const google  = s.googleAuthorized;
     const hasUser = s.user?.configured;
 
@@ -4755,9 +4755,8 @@
   }
 
   // ── Status panel sync log ────────────────────────────────
-  const _origRenderStatusPanel = renderStatusPanel;
   async function renderStatusPanel(s) {
-    _origRenderStatusPanel(s);
+    _renderStatusPanelCore(s);
     // append sync log
     try {
       const res = await fetch(`${API_BASE}/synclog/latest`, { cache: 'no-store' });
