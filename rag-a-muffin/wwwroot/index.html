@@ -25,7 +25,11 @@
     --sans:      'DM Sans', sans-serif;
   }
 
-  html, body {
+  html {
+    overflow-x: hidden; /* prevent viewport-level horizontal scroll */
+  }
+
+  body {
     height: 100%;
     background: var(--bg);
     color: var(--text);
@@ -33,7 +37,7 @@
     font-size: 15px;
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
-    overflow-x: hidden;
+    min-width: 0;
   }
 
   /* ── Layout ── */
@@ -42,9 +46,10 @@
     grid-template-rows: auto 1fr auto;
     height: 100dvh;
     max-width: 860px;
+    width: 100%;
     margin: 0 auto;
     padding: 0 16px;
-    overflow-x: hidden;
+    min-width: 0;
   }
 
   /* ── Header ── */
@@ -91,6 +96,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
+    min-width: 0;
   }
 
   .status-dot {
@@ -1574,6 +1580,28 @@
   }
   .index-doc-del:hover { border-color: var(--err); color: var(--err); }
 
+  .index-doc-reindex {
+    flex-shrink: 0;
+    background: none;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-family: var(--mono);
+    cursor: pointer;
+    padding: 3px 8px;
+    border-radius: 6px;
+    transition: border-color .15s, color .15s;
+  }
+  .index-doc-reindex:hover   { border-color: var(--accent); color: var(--accent); }
+  .index-doc-reindex:disabled { opacity: .4; cursor: not-allowed; }
+
+  mark {
+    background: rgba(74, 222, 128, 0.22);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+
   /* ── TopK selector ── */
   .topk-select {
     font-family: var(--mono);
@@ -1747,6 +1775,20 @@
     align-items: center;
     gap: 8px;
   }
+
+  .btn-export-chat {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 7px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: border-color .2s, color .2s;
+    white-space: nowrap;
+  }
+  .btn-export-chat:hover { border-color: var(--accent); color: var(--accent); }
 
   .btn-new-chat {
     background: var(--accent);
@@ -1979,6 +2021,7 @@
       padding-bottom: 2px;
       scrollbar-width: none;
       -webkit-overflow-scrolling: touch;
+      overscroll-behavior-x: none;
     }
     .filter-bar::-webkit-scrollbar { display: none; }
     .chip      { flex-shrink: 0; padding: 5px 11px; }
@@ -2062,7 +2105,7 @@
       margin: -6px -6px -6px 0;
       font-size: 16px;
     }
-    .btn-new-chat { padding: 7px 10px; font-size: 11px; }
+    .btn-new-chat, .btn-export-chat { padding: 7px 10px; font-size: 11px; }
 
     /* Status panel */
     .status-body { padding: 12px 14px; }
@@ -2078,8 +2121,8 @@
       gap: 6px;
     }
     .index-search, .index-type-select { width: 100%; }
-    /* Bigger touch target for document delete */
-    .index-doc-del { padding: 7px 12px; }
+    /* Bigger touch targets for document actions */
+    .index-doc-del, .index-doc-reindex { padding: 7px 12px; }
 
     /* Preview modal — reduce padding */
     .modal-header { padding: 13px 14px; }
@@ -2248,6 +2291,413 @@
     font-size: 11px;
     color: var(--text-muted);
   }
+
+  /* ── Notes / Bookmarks panels ── */
+  .notes-panel, .bookmarks-panel {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 400;
+    display: flex;
+    flex-direction: column;
+    animation: fadeIn .15s ease;
+  }
+  .notes-panel.hidden, .bookmarks-panel.hidden { display: none; }
+
+  .notes-panel-header, .bookmarks-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .notes-panel-title, .bookmarks-panel-title {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text);
+  }
+  .notes-header-actions, .bookmarks-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .notes-panel-close, .bookmarks-panel-close {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-family: var(--mono);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 6px 12px;
+    border-radius: 6px;
+    transition: color .15s, border-color .15s;
+  }
+  .notes-panel-close:hover, .bookmarks-panel-close:hover { color: var(--text); border-color: var(--text-muted); }
+
+  .notes-body, .bookmarks-body {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    gap: 0;
+    min-height: 0;
+  }
+
+  .notes-list-pane {
+    width: 260px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 12px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .note-item {
+    padding: 10px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .note-item:hover { background: var(--surface); }
+  .note-item.active { background: var(--surface); border-left: 3px solid var(--accent); padding-left: 9px; }
+  .note-item-title {
+    font-size: 13px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .note-item-date {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .notes-list-empty {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 20px 12px;
+  }
+
+  .note-editor-pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+    gap: 12px;
+    min-width: 0;
+  }
+  .note-title-input {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    font-weight: 500;
+    outline: none;
+    transition: border-color .2s;
+  }
+  .note-title-input:focus { border-color: var(--accent); }
+  .note-title-input::placeholder { color: var(--text-muted); }
+
+  .note-body-input {
+    flex: 1;
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.7;
+    outline: none;
+    resize: none;
+    transition: border-color .2s;
+  }
+  .note-body-input:focus { border-color: var(--accent); }
+  .note-body-input::placeholder { color: var(--text-muted); }
+
+  .note-editor-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .btn-save-note {
+    background: var(--accent);
+    border: none;
+    color: #0d0f0e;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 8px 20px;
+    border-radius: 7px;
+    cursor: pointer;
+    transition: opacity .2s;
+  }
+  .btn-save-note:hover { opacity: .85; }
+  .btn-delete-note {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--err);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 8px 16px;
+    border-radius: 7px;
+    cursor: pointer;
+    transition: border-color .2s;
+  }
+  .btn-delete-note:hover { border-color: var(--err); }
+  .btn-new-note {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color .15s;
+  }
+  .btn-new-note:hover { border-color: var(--accent); }
+
+  /* Bookmarks list */
+  .bookmarks-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: 700px;
+    width: 100%;
+    margin: 0 auto;
+  }
+  .bookmark-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent-dim);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .bookmark-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+  .bookmark-content {
+    font-size: 12.5px;
+    color: var(--text-muted);
+    line-height: 1.6;
+    max-height: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+  }
+  .bookmark-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 8px;
+  }
+  .bookmark-date {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+  .bookmark-del {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: color .15s;
+  }
+  .bookmark-del:hover { color: var(--err); }
+  .bookmarks-empty {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 40px 0;
+    text-align: center;
+  }
+
+  /* ── Save answer button (on assistant msgs) ── */
+  .btn-bookmark-answer {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 5px;
+    opacity: 0;
+    transition: opacity .15s, color .15s;
+    margin-left: auto;
+  }
+  .msg:hover .btn-bookmark-answer,
+  .msg.assistant .msg-actions:hover .btn-bookmark-answer { opacity: 1; }
+  .btn-bookmark-answer:hover { color: var(--accent); }
+
+  .msg-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 4px;
+  }
+
+  /* ── Quick-prompt bar ── */
+  .quick-prompt-bar {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .quick-prompt-bar.hidden { display: none; }
+  .quick-chip {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    border: 1px solid var(--accent-dim);
+    background: var(--surface2);
+    color: var(--accent);
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .quick-chip:hover { background: var(--accent-dim); }
+
+  /* ── No-retrieval toggle ── */
+  .no-retrieval-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 0;
+    margin-bottom: 4px;
+  }
+  .no-retrieval-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    flex: 1;
+  }
+  .no-retrieval-row .toggle-switch { margin: 0; }
+
+  /* ── New-content badge on sync btn ── */
+  .sync-new-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #facc15;
+    margin-left: 2px;
+    flex-shrink: 0;
+  }
+  .sync-new-badge.hidden { display: none; }
+
+  /* ── Settings: system prompt textarea ── */
+  .system-prompt-textarea {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.6;
+    outline: none;
+    resize: vertical;
+    min-height: 100px;
+    transition: border-color .2s;
+  }
+  .system-prompt-textarea:focus { border-color: var(--accent); }
+  .system-prompt-textarea::placeholder { color: var(--text-muted); }
+
+  /* ── Settings: quick-prompts editor ── */
+  .quick-prompt-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .quick-prompt-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .quick-prompt-label-input {
+    width: 120px;
+    flex-shrink: 0;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 8px 10px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    outline: none;
+  }
+  .quick-prompt-label-input:focus { border-color: var(--accent); }
+  .quick-prompt-template-input {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 8px 10px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    outline: none;
+  }
+  .quick-prompt-template-input:focus { border-color: var(--accent); }
+  .quick-prompt-del {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: color .15s;
+  }
+  .quick-prompt-del:hover { color: var(--err); }
+
+  /* ── Sync log table in status panel ── */
+  .sync-log-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 11.5px;
+  }
+  .sync-log-table th {
+    text-align: left;
+    color: var(--text-muted);
+    font-weight: 400;
+    padding: 6px 8px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sync-log-table td {
+    padding: 7px 8px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+  }
+  .sync-log-table td:first-child { color: var(--text); }
+  .sync-log-ok   { color: var(--accent) !important; }
+  .sync-log-err  { color: var(--err)    !important; }
 </style>
 </head>
 <body>
@@ -2350,6 +2800,19 @@
         <span class="btn-label">Index</span>
         <span class="index-count-badge" id="indexBadge">—</span>
       </button>
+      <button class="btn-logs" onclick="openNotes()" aria-label="Notes" title="Notes">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+        </svg>
+        <span class="btn-label">Notes</span>
+      </button>
+      <button class="btn-logs" onclick="openBookmarks()" aria-label="Bookmarks" title="Bookmarks">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+        </svg>
+        <span class="btn-label">Saved</span>
+      </button>
       <button class="btn-history" onclick="openHistory()" aria-label="Chat history">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
@@ -2391,6 +2854,7 @@
           <path d="M16 21h5v-5"/>
         </svg>
         <span class="btn-label">Sync All</span>
+        <span class="sync-new-badge hidden" id="syncNewBadge" title="New content since last viewed"></span>
       </button>
     </div>
   </header>
@@ -2416,6 +2880,7 @@
       <span class="chip" data-filter="rss" onclick="setFilter('rss')">RSS</span>
       <span class="chip" data-filter="web" onclick="setFilter('web')">Web</span>
       <span class="chip" data-filter="local" onclick="setFilter('local')">Local</span>
+      <span class="chip" data-filter="note" onclick="setFilter('note')">Notes</span>
     </div>
     <div class="filter-row-topk">
       <div class="filter-bar">
@@ -2433,6 +2898,14 @@
         <option value="12">12</option>
         <option value="16">16</option>
       </select>
+    </div>
+    <div class="quick-prompt-bar hidden" id="quickPromptBar"></div>
+    <div class="no-retrieval-row" id="noRetrievalRow" style="display:none">
+      <span class="no-retrieval-label">Chat-only mode (no document search)</span>
+      <label class="toggle-switch">
+        <input type="checkbox" id="noRetrievalToggle" onchange="toggleNoRetrieval(this.checked)" />
+        <span class="toggle-track"></span>
+      </label>
     </div>
     <div class="input-row">
       <textarea
@@ -2570,6 +3043,37 @@
       </select>
     </div>
 
+    <!-- Custom system prompt -->
+    <div class="settings-section">
+      <div class="settings-section-title">System Prompt</div>
+      <div class="settings-section-desc">Override the default system instructions. Leave blank to use the default. Use <code style="font-family:var(--mono);font-size:11px">{today}</code> for the current date.</div>
+      <textarea class="system-prompt-textarea" id="systemPromptInput" placeholder="Leave blank to use the default prompt…" rows="4"></textarea>
+      <button class="btn-add-entry" style="margin-top:6px;align-self:flex-start" onclick="resetSystemPrompt()">Reset to default</button>
+    </div>
+
+    <!-- No-retrieval mode -->
+    <div class="settings-section">
+      <div class="settings-section-title">Chat-Only Mode</div>
+      <div class="settings-section-desc">When enabled, all queries skip vector search and go directly to the LLM with conversation history only. Useful for general reasoning.</div>
+      <div class="settings-toggle-row">
+        <div class="settings-toggle-item">
+          <span class="settings-toggle-label">No-retrieval mode (global)</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="noRetrievalSetting" />
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick prompts -->
+    <div class="settings-section">
+      <div class="settings-section-title">Quick Prompts</div>
+      <div class="settings-section-desc">Shortcuts shown above the chat input. Click a chip to pre-fill the query.</div>
+      <div class="quick-prompt-editor" id="quickPromptsEditor"></div>
+      <button class="btn-add-entry" style="margin-top:8px;align-self:flex-start" onclick="addQuickPromptRow()">+ Add prompt</button>
+    </div>
+
   </div>
 
   <div class="settings-footer">
@@ -2631,8 +3135,13 @@
     <div class="history-panel-title">Chat History</div>
     <div class="history-header-actions">
       <button class="btn-new-chat" onclick="newChat()">+ New Chat</button>
+      <button class="btn-export-chat" onclick="exportChat()" title="Export current chat as Markdown">⬇ Export</button>
       <button class="history-panel-close" onclick="closeHistory()">← back</button>
     </div>
+  </div>
+  <div style="padding:10px 20px 0;flex-shrink:0">
+    <input class="index-search" id="historySearch" placeholder="Search sessions…"
+           oninput="searchHistoryDebounced()" style="width:100%;margin-bottom:0" />
   </div>
   <div class="history-body" id="historyBody">
     <div class="history-empty">Loading…</div>
@@ -2682,6 +3191,43 @@
   </div>
 </div>
 
+<!-- Notes panel -->
+<div class="notes-panel hidden" id="notesPanel">
+  <div class="notes-panel-header">
+    <div class="notes-panel-title">Notes</div>
+    <div class="notes-header-actions">
+      <button class="btn-new-note" onclick="newNote()">+ New</button>
+      <button class="notes-panel-close" onclick="closeNotes()">← back</button>
+    </div>
+  </div>
+  <div class="notes-body">
+    <div class="notes-list-pane" id="notesListPane">
+      <div class="notes-list-empty">Loading…</div>
+    </div>
+    <div class="note-editor-pane">
+      <input class="note-title-input" id="noteTitleInput" placeholder="Note title…" />
+      <textarea class="note-body-input" id="noteBodyInput" placeholder="Write your note here…"></textarea>
+      <div class="note-editor-actions">
+        <button class="btn-delete-note" id="btnDeleteNote" onclick="deleteCurrentNote()" style="display:none">Delete</button>
+        <button class="btn-save-note" onclick="saveCurrentNote()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bookmarks panel -->
+<div class="bookmarks-panel hidden" id="bookmarksPanel">
+  <div class="bookmarks-panel-header">
+    <div class="bookmarks-panel-title">Saved Answers</div>
+    <button class="bookmarks-panel-close" onclick="closeBookmarks()">← back</button>
+  </div>
+  <div class="bookmarks-body">
+    <div class="bookmarks-list" id="bookmarksList">
+      <div class="bookmarks-empty">Loading…</div>
+    </div>
+  </div>
+</div>
+
 <script>
   // ── Config ───────────────────────────────────────────────
   const API_BASE = window.location.origin;
@@ -2723,6 +3269,7 @@
   let sessionMessages     = []; // [{role, content, citations}] — full restore data
   let currentSessionId    = null;
   let sessionCreatedAt    = null;
+  let lastQuery           = '';  // used to highlight terms in the preview modal
 
   const DOC_SOURCE_TYPES = ['pdf', 'docx', 'doc', 'txt', 'md'];
 
@@ -2740,6 +3287,7 @@
     if (activeFilter === 'rss')      return ['rss'];
     if (activeFilter === 'web')      return ['web'];
     if (activeFilter === 'local')    return ['local'];
+    if (activeFilter === 'note')     return ['note'];
     return null; // all sources
   }
 
@@ -2962,6 +3510,7 @@
     const query = input.value.trim();
     if (!query || isStreaming) return;
 
+    lastQuery  = query;
     isStreaming = true;
     setInputDisabled(true);
     hideEmpty();
@@ -2983,6 +3532,7 @@
           topK: activeTopK,
           sourceTypes: buildSourceTypes(),
           history: conversationHistory.slice(-10),
+          noRetrieval: activeNoRetrieval,
           ...buildDateRange()
         })
       });
@@ -3086,6 +3636,17 @@
         }).catch(() => {});
       };
       header.appendChild(copyBtn);
+
+      const bmBtn = document.createElement('button');
+      bmBtn.className = 'btn-bookmark-answer';
+      bmBtn.title     = 'Save to bookmarks';
+      bmBtn.textContent = '🔖';
+      bmBtn.onclick = () => {
+        const content = bubble.textContent;
+        const firstLine = content.split('\n')[0].slice(0, 80);
+        saveBookmark(firstLine || 'Saved answer', content, currentSessionId);
+      };
+      header.appendChild(bmBtn);
     }
 
     msg.appendChild(header);
@@ -3186,7 +3747,7 @@
 
     document.getElementById('previewTitle').textContent = c.title;
     document.getElementById('previewMeta').textContent  = meta;
-    document.getElementById('previewBody').textContent  = c.preview || '(no preview available)';
+    document.getElementById('previewBody').innerHTML    = highlightTerms(c.preview || '(no preview available)', lastQuery);
     document.getElementById('previewModal').classList.remove('hidden');
   }
 
@@ -3202,6 +3763,21 @@
 
   function escapeHtml(str) {
     return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function highlightTerms(text, query) {
+    const safe = escapeHtml(text || '');
+    if (!query) return safe;
+    const words = [...new Set(query.trim().split(/\s+/).filter(w => w.length > 2))];
+    if (words.length === 0) return safe;
+    const pattern = new RegExp(
+      `(${words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`,
+      'gi'
+    );
+    // Split the ORIGINAL text around matches, then escape each segment individually
+    return text.split(pattern).map((part, i) =>
+      i % 2 === 1 ? `<mark>${escapeHtml(part)}</mark>` : escapeHtml(part)
+    ).join('');
   }
 
   function formatDate(iso) {
@@ -3381,8 +3957,11 @@
       }
 
       if (settingsRes.ok) {
-        const settings = await settingsRes.json();
-        currentLlmModel = settings.llmModel ?? 'llama3.2';
+        appSettings = await settingsRes.json();
+        currentLlmModel = appSettings.llmModel ?? 'llama3.2';
+        document.getElementById('systemPromptInput').value = appSettings.systemPrompt || '';
+        document.getElementById('noRetrievalSetting').checked = !!appSettings.noRetrieval;
+        renderQuickPromptsEditor();
       }
 
       if (modelsRes.ok) {
@@ -3527,7 +4106,13 @@
     btn.disabled    = true;
     btn.textContent = 'Saving...';
     try {
-      const [cfgRes, settingsRes] = await Promise.all([
+      const systemPrompt = document.getElementById('systemPromptInput').value.trim() || null;
+    const noRetrieval  = document.getElementById('noRetrievalSetting').checked;
+    const quickPrompts = (appSettings.quickPrompts ?? []).filter(p => p.label && p.template);
+
+    const settingsToSave = { llmModel, systemPrompt, noRetrieval, quickPrompts };
+
+    const [cfgRes, settingsRes] = await Promise.all([
         fetch(`${API_BASE}/config/connectors`, {
           method:  'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -3536,14 +4121,17 @@
         fetch(`${API_BASE}/config/settings`, {
           method:  'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ llmModel })
+          body:    JSON.stringify(settingsToSave)
         })
       ]);
       if (!cfgRes.ok || !settingsRes.ok) throw new Error('Save failed');
-      connectorConfig = await cfgRes.json();
-      currentLlmModel = llmModel;
+      connectorConfig  = await cfgRes.json();
+      appSettings      = { ...appSettings, ...settingsToSave };
+      currentLlmModel  = llmModel;
+      activeNoRetrieval = noRetrieval;
       renderConnectorConfig();
       renderConnectorToggles();
+      renderQuickPromptBar();
       showToast('✓ Settings saved');
     } catch (err) {
       showToast(`Failed to save: ${err.message}`, true);
@@ -3742,8 +4330,10 @@
       const date   = d.publishedAt ? new Date(d.publishedAt).toLocaleDateString() : '—';
       const meta   = [d.author, date, `${d.chunkCount} chunk${d.chunkCount !== 1 ? 's' : ''}`]
                        .filter(Boolean).join(' · ');
-      const label  = SOURCE_LABELS[d.sourceType] ?? d.sourceType;
-      const safeId = escapeHtml(d.documentId);
+      const label      = SOURCE_LABELS[d.sourceType] ?? d.sourceType;
+      const safeId     = escapeHtml(d.documentId);
+      const safeTitle  = escapeHtml(d.title).replace(/'/g, "\\'");
+      const canReindex = d.sourceType === 'web' || d.sourceType === 'local';
       return `
         <div class="index-doc-row">
           <span class="index-doc-badge ${d.sourceType}">${label}</span>
@@ -3751,7 +4341,8 @@
             <div class="index-doc-title" title="${escapeHtml(d.title)}">${escapeHtml(d.title)}</div>
             <div class="index-doc-meta">${escapeHtml(meta)}</div>
           </div>
-          <button class="index-doc-del" onclick="deleteDoc('${safeId}', '${escapeHtml(d.title).replace(/'/g,"\\'")}')">✕ Remove</button>
+          ${canReindex ? `<button class="index-doc-reindex" id="reindex-${safeId}" onclick="reindexDoc('${safeId}', '${safeTitle}')" title="Re-fetch and re-index this document">↻</button>` : ''}
+          <button class="index-doc-del" onclick="deleteDoc('${safeId}', '${safeTitle}')">✕ Remove</button>
         </div>`;
     }).join('');
   }
@@ -3786,6 +4377,22 @@
     showToast('✓ Document removed from index');
   }
 
+  async function reindexDoc(documentId, title) {
+    const btn = document.getElementById(`reindex-${documentId}`);
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    try {
+      const res = await fetch(`${API_BASE}/index/documents/${encodeURIComponent(documentId)}/reindex`, { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        showToast(err?.message || 'Re-index failed', true);
+        return;
+      }
+      showToast(`↻ Re-indexed: ${title}`);
+      await loadIndex();
+    } catch { showToast('Re-index failed', true); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = '↻'; } }
+  }
+
   async function deleteBySourceType(sourceType) {
     const label = SOURCE_LABELS[sourceType] ?? sourceType;
     const count = allIndexDocs.filter(d => d.sourceType === sourceType).length;
@@ -3809,6 +4416,31 @@
   }
 
   // ── Session management ───────────────────────────────────
+
+  function exportChat() {
+    if (sessionMessages.length === 0) {
+      showToast('Nothing to export', true);
+      return;
+    }
+    const firstUser = sessionMessages.find(m => m.role === 'user')?.content ?? 'Chat';
+    const title = firstUser.length > 60 ? firstUser.slice(0, 60) + '…' : firstUser;
+    const date  = sessionCreatedAt ? new Date(sessionCreatedAt).toLocaleDateString() : new Date().toLocaleDateString();
+
+    const lines = [`# ${title}`, `*${date}*`, ''];
+    for (const msg of sessionMessages) {
+      lines.push(msg.role === 'user' ? `**You:** ${msg.content}` : `**Muffin:** ${msg.content}`);
+      lines.push('');
+    }
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/markdown' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = title.replace(/[^a-z0-9]+/gi, '-').toLowerCase().replace(/^-|-$/g, '') + '.md';
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('✓ Chat exported');
+  }
 
   function newChat() {
     conversationHistory = [];
@@ -3972,6 +4604,292 @@
     showToast('✓ Session deleted');
   }
 
+  // ── Notes ────────────────────────────────────────────────
+  let notesList   = [];
+  let activeNoteId = null;
+
+  async function openNotes() {
+    document.getElementById('notesPanel').classList.remove('hidden');
+    await loadNotes();
+  }
+  function closeNotes() { document.getElementById('notesPanel').classList.add('hidden'); }
+
+  async function loadNotes() {
+    try {
+      const res = await fetch(`${API_BASE}/notes`, { cache: 'no-store' });
+      notesList = res.ok ? await res.json() : [];
+    } catch { notesList = []; }
+    renderNotesList();
+  }
+
+  function renderNotesList() {
+    const pane = document.getElementById('notesListPane');
+    if (!notesList.length) {
+      pane.innerHTML = '<div class="notes-list-empty">No notes yet. Click + New to start.</div>';
+      return;
+    }
+    pane.innerHTML = notesList.map(n =>
+      `<div class="note-item${n.id === activeNoteId ? ' active' : ''}"
+            onclick="selectNote('${escapeHtml(n.id)}')">
+        <div class="note-item-title">${escapeHtml(n.title || 'Untitled')}</div>
+        <div class="note-item-date">${formatDate(n.updatedAt)}</div>
+      </div>`
+    ).join('');
+  }
+
+  function selectNote(id) {
+    activeNoteId = id;
+    const note = notesList.find(n => n.id === id);
+    if (!note) return;
+    document.getElementById('noteTitleInput').value = note.title || '';
+    document.getElementById('noteBodyInput').value  = note.body  || '';
+    document.getElementById('btnDeleteNote').style.display = '';
+    renderNotesList();
+  }
+
+  function newNote() {
+    activeNoteId = null;
+    document.getElementById('noteTitleInput').value = '';
+    document.getElementById('noteBodyInput').value  = '';
+    document.getElementById('btnDeleteNote').style.display = 'none';
+    renderNotesList();
+    document.getElementById('noteTitleInput').focus();
+  }
+
+  async function saveCurrentNote() {
+    const title = document.getElementById('noteTitleInput').value.trim() || 'Untitled';
+    const body  = document.getElementById('noteBodyInput').value.trim();
+    const note  = { id: activeNoteId || undefined, title, body };
+    if (!note.id) delete note.id; // let server assign
+    try {
+      const res = await fetch(`${API_BASE}/notes`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(note)
+      });
+      if (!res.ok) throw new Error();
+      const saved = await res.json();
+      activeNoteId = saved.id;
+      showToast('✓ Note saved');
+      await loadNotes();
+    } catch { showToast('Failed to save note', true); }
+  }
+
+  async function deleteCurrentNote() {
+    if (!activeNoteId) return;
+    if (!confirm('Delete this note? It will also be removed from the index.')) return;
+    try {
+      await fetch(`${API_BASE}/notes/${encodeURIComponent(activeNoteId)}`, { method: 'DELETE' });
+      activeNoteId = null;
+      newNote();
+      showToast('✓ Note deleted');
+      await loadNotes();
+    } catch { showToast('Failed to delete note', true); }
+  }
+
+  // ── Bookmarks ────────────────────────────────────────────
+  async function openBookmarks() {
+    document.getElementById('bookmarksPanel').classList.remove('hidden');
+    await loadBookmarks();
+  }
+  function closeBookmarks() { document.getElementById('bookmarksPanel').classList.add('hidden'); }
+
+  async function loadBookmarks() {
+    try {
+      const res = await fetch(`${API_BASE}/bookmarks`, { cache: 'no-store' });
+      const bms = res.ok ? await res.json() : [];
+      renderBookmarksList(bms);
+    } catch { document.getElementById('bookmarksList').innerHTML = '<div class="bookmarks-empty">Failed to load.</div>'; }
+  }
+
+  function renderBookmarksList(bms) {
+    const list = document.getElementById('bookmarksList');
+    if (!bms.length) {
+      list.innerHTML = '<div class="bookmarks-empty">No saved answers yet. Use the bookmark button on any assistant response.</div>';
+      return;
+    }
+    list.innerHTML = bms.map(b => `
+      <div class="bookmark-card">
+        <div class="bookmark-title">${escapeHtml(b.title)}</div>
+        <div class="bookmark-content">${escapeHtml(b.content)}</div>
+        <div class="bookmark-footer">
+          <span class="bookmark-date">${formatDate(b.createdAt)}</span>
+          <button class="bookmark-del" onclick="deleteBookmark('${escapeHtml(b.id)}')">✕ Remove</button>
+        </div>
+      </div>`).join('');
+  }
+
+  async function saveBookmark(title, content, sessionId) {
+    try {
+      const res = await fetch(`${API_BASE}/bookmarks`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ title, content, sessionId })
+      });
+      if (!res.ok) throw new Error();
+      showToast('✓ Answer saved to bookmarks');
+    } catch { showToast('Failed to save bookmark', true); }
+  }
+
+  async function deleteBookmark(id) {
+    await fetch(`${API_BASE}/bookmarks/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    showToast('✓ Removed');
+    await loadBookmarks();
+  }
+
+  // ── History search ────────────────────────────────────────
+  let _histSearchTimer = null;
+  function searchHistoryDebounced() {
+    clearTimeout(_histSearchTimer);
+    _histSearchTimer = setTimeout(searchHistory, 280);
+  }
+
+  async function searchHistory() {
+    const q = document.getElementById('historySearch')?.value?.trim();
+    if (!q) { await loadHistoryList(); return; }
+    try {
+      const res = await fetch(`${API_BASE}/chats/search?q=${encodeURIComponent(q)}`);
+      if (!res.ok) throw new Error();
+      renderHistoryList(await res.json());
+    } catch { /* fall back to full list */ }
+  }
+
+  // ── Status panel sync log ────────────────────────────────
+  const _origRenderStatusPanel = renderStatusPanel;
+  async function renderStatusPanel(s) {
+    _origRenderStatusPanel(s);
+    // append sync log
+    try {
+      const res = await fetch(`${API_BASE}/synclog/latest`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const entries = await res.json();
+      if (!entries.length) return;
+      const rows = entries.map(e => {
+        const cls = e.outcome === 'ok' ? 'sync-log-ok' : 'sync-log-err';
+        const when = formatDate(e.ranAt);
+        const docs = e.documentCount > 0 ? `+${e.documentCount}` : '—';
+        return `<tr>
+          <td>${escapeHtml(e.connectorName)}</td>
+          <td class="${cls}">${escapeHtml(e.outcome)}</td>
+          <td>${docs}</td>
+          <td>${when}</td>
+        </tr>`;
+      }).join('');
+      document.getElementById('statusBody').insertAdjacentHTML('beforeend', `
+        <div class="status-group-label" style="margin-top:12px">Last Sync Results</div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;padding:4px 8px">
+          <table class="sync-log-table">
+            <thead><tr><th>Connector</th><th>Status</th><th>Docs</th><th>When</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`);
+    } catch { /* sync log optional */ }
+  }
+
+  // ── Quick prompts ────────────────────────────────────────
+  let appSettings = { llmModel: 'llama3.2', systemPrompt: '', noRetrieval: false, quickPrompts: [] };
+
+  function renderQuickPromptBar() {
+    const bar = document.getElementById('quickPromptBar');
+    const qp  = appSettings.quickPrompts ?? [];
+    if (!qp.length) { bar.classList.add('hidden'); return; }
+    bar.classList.remove('hidden');
+    bar.innerHTML = qp.map(p =>
+      `<span class="quick-chip" onclick="useQuickPrompt(${JSON.stringify(p.template)})">${escapeHtml(p.label)}</span>`
+    ).join('');
+  }
+
+  function useQuickPrompt(template) {
+    document.getElementById('input').value = template;
+    document.getElementById('input').focus();
+    autoResize(document.getElementById('input'));
+  }
+
+  // ── No-retrieval mode ────────────────────────────────────
+  let activeNoRetrieval = false;
+
+  function toggleNoRetrieval(val) {
+    activeNoRetrieval = val;
+  }
+
+  // ── Save answer bookmark button ──────────────────────────
+  function addSaveAnswerBtn(bubble, content) {
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+    const existingCopyBtn = bubble.parentElement?.querySelector('.btn-copy-answer');
+    if (existingCopyBtn) actions.appendChild(existingCopyBtn);
+
+    const btn = document.createElement('button');
+    btn.className = 'btn-bookmark-answer';
+    btn.title     = 'Save to bookmarks';
+    btn.textContent = '🔖 Save';
+    btn.onclick = () => {
+      const firstLine = content.split('\n')[0].slice(0, 80);
+      saveBookmark(firstLine || 'Saved answer', content, currentSessionId);
+    };
+    actions.appendChild(btn);
+    bubble.parentElement?.appendChild(actions);
+  }
+
+  // ── New-content badge (Phase 15) ─────────────────────────
+  async function checkNewContent() {
+    try {
+      const res = await fetch(`${API_BASE}/synclog/latest`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const entries = await res.json();
+      if (!entries.length) return;
+      const lastOk = entries.filter(e => e.outcome === 'ok').map(e => new Date(e.ranAt).getTime());
+      if (!lastOk.length) return;
+      const lastSyncMs  = Math.max(...lastOk);
+      const lastViewedMs = parseInt(localStorage.getItem('ram_lastViewed') || '0', 10);
+      const badge = document.getElementById('syncNewBadge');
+      if (badge) badge.classList.toggle('hidden', lastSyncMs <= lastViewedMs);
+    } catch { /* optional */ }
+  }
+
+  // ── Digest shortcut ──────────────────────────────────────
+  function digestShortcut() {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const dateFrom = yesterday.toISOString();
+    // Set 24h filter and fire a pre-built query
+    activeDateFilter = 'custom_digest';
+    document.getElementById('input').value = 'Summarise what\'s new in the last 24 hours across all my sources.';
+    // Override dateFrom just for this query via a one-shot override — handled in sendQuery
+    sendQuery({ overrideDateFrom: dateFrom });
+  }
+
+  // ── Quick-prompt editor (in settings) ───────────────────
+  function renderQuickPromptsEditor() {
+    const qp = appSettings.quickPrompts ?? [];
+    document.getElementById('quickPromptsEditor').innerHTML = qp.map((p, i) => `
+      <div class="quick-prompt-row" id="qpr-${i}">
+        <input class="quick-prompt-label-input" placeholder="Label" value="${escapeHtml(p.label)}"
+               onchange="updateQuickPrompt(${i}, 'label', this.value)" />
+        <input class="quick-prompt-template-input" placeholder="Prompt template…" value="${escapeHtml(p.template)}"
+               onchange="updateQuickPrompt(${i}, 'template', this.value)" />
+        <button class="quick-prompt-del" onclick="deleteQuickPrompt(${i})">✕</button>
+      </div>`).join('');
+  }
+
+  function addQuickPromptRow() {
+    appSettings.quickPrompts = [...(appSettings.quickPrompts ?? []), { label: '', template: '' }];
+    renderQuickPromptsEditor();
+  }
+
+  function updateQuickPrompt(i, field, value) {
+    appSettings.quickPrompts[i][field] = value;
+  }
+
+  function deleteQuickPrompt(i) {
+    appSettings.quickPrompts.splice(i, 1);
+    renderQuickPromptsEditor();
+  }
+
+  function resetSystemPrompt() {
+    document.getElementById('systemPromptInput').value = '';
+  }
+
   // ── Theme ─────────────────────────────────────────────────
   function toggleTheme() {
     const isLight = document.documentElement.classList.toggle('light');
@@ -3990,6 +4908,8 @@
       closeLogs();
       closeIndex();
       closeHistory();
+      closeNotes();
+      closeBookmarks();
       closePreviewBtn();
     }
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -3998,6 +4918,23 @@
     }
   });
   refreshIndexBadge();
+  checkNewContent();
+  // Load settings at boot to show quick-prompt bar and no-retrieval toggle
+  fetch(`${API_BASE}/config/settings`, { cache: 'no-store' })
+    .then(r => r.ok ? r.json() : null)
+    .then(s => {
+      if (!s) return;
+      appSettings = s;
+      activeNoRetrieval = !!s.noRetrieval;
+      if (s.noRetrieval) {
+        document.getElementById('noRetrievalRow').style.display = '';
+        document.getElementById('noRetrievalToggle').checked = true;
+      }
+      renderQuickPromptBar();
+    })
+    .catch(() => {});
+
+  localStorage.setItem('ram_lastViewed', Date.now().toString());
   boot();
 </script>
 </body>

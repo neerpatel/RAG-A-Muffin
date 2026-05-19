@@ -82,6 +82,10 @@
               "target": "Package",
               "version": "[8.0.26, )"
             },
+            "Microsoft.Data.Sqlite": {
+              "target": "Package",
+              "version": "[8.0.12, )"
+            },
             "Microsoft.Extensions.AI": {
               "target": "Package",
               "version": "[10.5.2, )"

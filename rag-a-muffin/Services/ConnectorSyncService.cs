@@ -4,20 +4,23 @@ namespace RagAMuffin.Services
 {
     public class ConnectorSyncService : BackgroundService
     {
-        private readonly IServiceScopeFactory     _scopeFactory;
+        private readonly IServiceScopeFactory         _scopeFactory;
         private readonly ILogger<ConnectorSyncService> _logger;
-        private readonly ConnectorConfigService   _connectorConfig;
-        private readonly int                      _defaultIntervalMinutes;
+        private readonly ConnectorConfigService        _connectorConfig;
+        private readonly SyncLogService                _syncLog;
+        private readonly int                           _defaultIntervalMinutes;
 
         public ConnectorSyncService(
             IServiceScopeFactory scopeFactory,
             ILogger<ConnectorSyncService> logger,
             IConfiguration configuration,
-            ConnectorConfigService connectorConfig)
+            ConnectorConfigService connectorConfig,
+            SyncLogService syncLog)
         {
             _scopeFactory   = scopeFactory;
             _logger         = logger;
             _connectorConfig = connectorConfig;
+            _syncLog         = syncLog;
             _defaultIntervalMinutes = configuration.GetValue("Ingestion:IntervalMinutes", 60);
         }
 
@@ -74,10 +77,12 @@ namespace RagAMuffin.Services
                     {
                         var documents = await connector.FetchAsync(ct);
                         await pipeline.IngestAsync(documents, ct);
+                        _syncLog.Record(connector.SourceType, "ok", documents.Count());
                     }
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "Connector '{SourceType}' failed", connector.SourceType);
+                        _syncLog.Record(connector.SourceType, "error", 0, ex.Message);
                     }
                 }
 

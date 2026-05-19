@@ -256,7 +256,7 @@ Click the **Sources** icon in the header to open the connector config panel. Add
 
 ### Connector toggles
 
-Inside the Sources panel, toggle individual connectors on or off without removing their configuration. Disabled connectors are skipped during every sync cycle (scheduled and manual). Toggle state persists to `./data/connectors.json`.
+Inside the Sources panel, toggle individual connectors on or off without removing their configuration. Disabled connectors are skipped during every sync cycle (scheduled and manual). Toggle state persists to `./data/app.db`.
 
 ### Sync interval
 
@@ -264,7 +264,7 @@ Set the background sync frequency from the Sources panel (0 = disabled, or any p
 
 ### LLM model
 
-The Sources panel includes a **Model** dropdown populated from Ollama's available models. Select any model you've pulled with `ollama pull <model>` and it takes effect on the next query. The choice is persisted to `./data/settings.json`.
+The Sources panel includes a **Model** dropdown populated from Ollama's available models. Select any model you've pulled with `ollama pull <model>` and it takes effect on the next query. The choice is persisted to `./data/app.db`.
 
 ### Manual sync
 
@@ -274,7 +274,7 @@ Click **Sync All** in the header to immediately run all connectors (Gmail, Drive
 
 Each Q&A turn is automatically added to the current session's context. Follow-up questions like "what about the one from last week?" or "can you summarise that differently?" work without repeating yourself.
 
-- **Auto-save** — sessions are saved to `./data/chats/` as JSON after every response and restored on page reload.
+- **Auto-save** — sessions are saved to SQLite (`./data/app.db`) after every response and restored on page reload.
 - **History panel** — click the **History** (clock) icon to browse past sessions. Click any session to restore the full conversation.
 - **New chat** — click **+ New Chat** inside the history panel, or the **new chat** link in the input bar, to start a fresh session without losing the old one.
 - The last 5 Q&A turns (10 messages) are sent as context with each query. Older turns remain visible in the UI and saved to disk, but are not re-sent to avoid prompt bloat.
@@ -490,14 +490,14 @@ All persistent data lives in `./data/` on the host:
 
 | Path | Contents |
 |---|---|
+| `./data/app.db` | SQLite database — chat sessions, connector config, settings, sync log, notes, bookmarks |
 | `./data/tokens/` | Google OAuth refresh tokens |
 | `./data/uploads/` | Uploaded files |
 | `./data/watch/` | Watch folder (drop files here for auto-ingestion) |
-| `./data/connectors.json` | RSS feeds, web URLs, local directories, Gmail label filter, connector toggles, sync interval |
-| `./data/chats/` | Chat sessions (one JSON file per session) |
-| `./data/settings.json` | App settings: active LLM model |
 | `qdrant_data` (Docker volume) | Vector embeddings |
 | `ollama_data` (Docker volume) | Downloaded models |
+
+> **Backup**: `cp data/app.db backup/app.db` is all you need. The SQLite WAL file is flushed on each write so a copy is always safe. Legacy JSON files (`connectors.json`, `settings.json`, `chats/`) are imported automatically on first boot and can be removed after migration.
 
 ---
 

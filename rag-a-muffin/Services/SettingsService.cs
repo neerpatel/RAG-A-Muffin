@@ -1,3 +1,4 @@
+using RagAMuffin.Database;
 using RagAMuffin.Models;
 using System.Text.Json;
 
@@ -5,42 +6,52 @@ namespace RagAMuffin.Services
 {
     public class SettingsService
     {
-        private const string DataPath = "/app/data/settings.json";
-        private static readonly JsonSerializerOptions _json = new() { WriteIndented = true };
-        private volatile AppSettings _current;
+        private readonly AppDatabase _db;
+        private readonly IConfiguration _config;
+        private static readonly JsonSerializerOptions _jsonOpts =
+            new() { PropertyNameCaseInsensitive = true, WriteIndented = false };
 
+        private volatile AppSettings _current;
         public AppSettings Current => _current;
 
-        public SettingsService(IConfiguration config)
+        public SettingsService(AppDatabase db, IConfiguration config)
         {
-            _current = LoadOrDefault(config);
+            _db      = db;
+            _config  = config;
+            _current = LoadOrDefault();
         }
 
         public async Task<AppSettings> SaveAsync(AppSettings settings)
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(DataPath)!);
-            await File.WriteAllTextAsync(DataPath, JsonSerializer.Serialize(settings, _json));
+            var json = JsonSerializer.Serialize(settings, _jsonOpts);
+            using var conn = _db.Open();
+            using var cmd  = conn.CreateCommand();
+            cmd.CommandText = "INSERT OR REPLACE INTO KV (Key, Value, UpdatedAt) VALUES ('settings', $v, datetime('now'))";
+            cmd.Parameters.AddWithValue("$v", json);
+            cmd.ExecuteNonQuery();
             _current = settings;
-            return _current;
+            return await Task.FromResult(_current);
         }
 
-        private static AppSettings LoadOrDefault(IConfiguration config)
+        private AppSettings LoadOrDefault()
         {
-            if (File.Exists(DataPath))
+            try
             {
-                try
+                using var conn = _db.Open();
+                using var cmd  = conn.CreateCommand();
+                cmd.CommandText = "SELECT Value FROM KV WHERE Key = 'settings'";
+                var raw = cmd.ExecuteScalar() as string;
+                if (raw is not null)
                 {
-                    var loaded = JsonSerializer.Deserialize<AppSettings>(
-                        File.ReadAllText(DataPath),
-                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    var loaded = JsonSerializer.Deserialize<AppSettings>(raw, _jsonOpts);
                     if (loaded is not null) return loaded;
                 }
-                catch { /* corrupt file — fall through */ }
             }
+            catch { /* fall through to defaults */ }
 
             return new AppSettings
             {
-                LlmModel = config.GetValue("Ollama:LlmModel", "llama3.2")!
+                LlmModel = _config.GetValue("Ollama:LlmModel", "llama3.2")!
             };
         }
     }

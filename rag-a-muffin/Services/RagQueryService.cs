@@ -12,17 +12,20 @@ namespace RagAMuffin.Services
         private readonly IEmbeddingService _embedder;
         private readonly IVectorStore _vectorStore;
         private readonly ILlmService _llm;
+        private readonly SettingsService _settings;
         private readonly ILogger<RagQueryService> _logger;
 
         public RagQueryService(
             IEmbeddingService embedder,
             IVectorStore vectorStore,
             ILlmService llm,
+            SettingsService settings,
             ILogger<RagQueryService> logger)
         {
             _embedder = embedder;
             _vectorStore = vectorStore;
             _llm = llm;
+            _settings = settings;
             _logger = logger;
         }
 
@@ -42,7 +45,7 @@ namespace RagAMuffin.Services
                 };
             }
 
-            var prompt = BuildPrompt(request.Query, chunks, request.History);
+            var prompt = BuildPrompt(request.Query, chunks, request.History, _settings.Current.SystemPrompt);
             _logger.LogInformation("Sending prompt to LLM ({ChunkCount} chunks)...", chunks.Count);
             var answer = await _llm.CompleteAsync(prompt, ct);
 
@@ -62,21 +65,32 @@ namespace RagAMuffin.Services
             [EnumeratorCancellation] CancellationToken ct = default)
         {
             _logger.LogInformation("Embedding streaming query: {Question}", request.Query);
-            var queryVector = await _embedder.EmbedAsync(request.Query, ct);
 
-            var chunks = await ResolveChunksAsync(request, queryVector, ct);
+            var noRetrieval = request.NoRetrieval || _settings.Current.NoRetrieval;
+            List<ScoredChunk> chunks;
 
-            foreach (var c in chunks)
-                _logger.LogInformation("Using: [{SourceType}] '{Title}' Score={Score:F3}",
-                    c.SourceType, c.Title, c.Score);
-
-            if (chunks.Count == 0)
+            if (noRetrieval)
             {
-                yield return "I couldn't find any relevant documents for your question.";
-                yield break;
+                _logger.LogInformation("No-retrieval mode active — skipping vector search");
+                chunks = [];
+            }
+            else
+            {
+                var queryVector = await _embedder.EmbedAsync(request.Query, ct);
+                chunks = await ResolveChunksAsync(request, queryVector, ct);
+
+                foreach (var c in chunks)
+                    _logger.LogInformation("Using: [{SourceType}] '{Title}' Score={Score:F3}",
+                        c.SourceType, c.Title, c.Score);
+
+                if (chunks.Count == 0)
+                {
+                    yield return "I couldn't find any relevant documents for your question.";
+                    yield break;
+                }
             }
 
-            var prompt = BuildPrompt(request.Query, chunks, request.History);
+            var prompt = BuildPrompt(request.Query, chunks, request.History, _settings.Current.SystemPrompt);
 
             await foreach (var token in _llm.StreamAsync(prompt, ct))
             {
@@ -160,7 +174,7 @@ namespace RagAMuffin.Services
             );
         }
 
-        private static string BuildPrompt(string question, List<ScoredChunk> chunks, ChatMessage[]? history = null)
+        private static string BuildPrompt(string question, List<ScoredChunk> chunks, ChatMessage[]? history = null, string? customSystemPrompt = null)
         {
             var today = DateTime.Now.ToString("dddd, MMMM d, yyyy");
 
@@ -197,16 +211,14 @@ namespace RagAMuffin.Services
                 historySection = $"\n\nCONVERSATION HISTORY:\n{turns}";
             }
 
-            return $"""
-        You are a personal assistant. Today is {today}.
-        Answer the user's question using only the documents provided below.
-        When a question refers to something from the conversation history, use both the documents and the history to answer.
-        Be direct and specific — if the answer is yes/no, lead with that.
-        When dates or authors matter, mention them in your answer.
-        If the documents don't contain enough information to answer, say so clearly — don't guess.
+            var systemHeader = string.IsNullOrWhiteSpace(customSystemPrompt)
+                ? $"You are a personal assistant. Today is {today}.\nAnswer the user's question using only the documents provided below.\nWhen a question refers to something from the conversation history, use both the documents and the history to answer.\nBe direct and specific — if the answer is yes/no, lead with that.\nWhen dates or authors matter, mention them in your answer.\nIf the documents don't contain enough information to answer, say so clearly — don't guess."
+                : customSystemPrompt.Replace("{today}", today);
 
-        DOCUMENTS:
-        {context}{historySection}
+            var documentsSection = chunks.Count > 0 ? $"\n\nDOCUMENTS:\n{context}" : "";
+
+            return $"""
+        {systemHeader}{documentsSection}{historySection}
 
         QUESTION: {question}
 

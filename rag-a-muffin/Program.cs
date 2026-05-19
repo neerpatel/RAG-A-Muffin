@@ -1,3 +1,4 @@
+using RagAMuffin.Database;
 using RagAMuffin.Models;
 using RagAMuffin.Auth;
 using RagAMuffin.Services.ExternalApps;
@@ -16,11 +17,18 @@ var builder = WebApplication.CreateBuilder(args);
 var logBuffer = new InMemoryLogBuffer();
 builder.Services.AddSingleton(logBuffer);
 
+// SQLite — must be registered before any service that depends on it
+builder.Services.AddSingleton<AppDatabase>();
+
 // User profile — singleton so GmailConnector and setup endpoint share the same state
 builder.Services.AddSingleton<UserProfileService>();
 
 // Connector config — singleton so connectors and the config endpoint share the same state
 builder.Services.AddSingleton<ConnectorConfigService>();
+
+builder.Services.AddSingleton<SyncLogService>();
+builder.Services.AddSingleton<NoteService>();
+builder.Services.AddSingleton<BookmarkService>();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -97,7 +105,6 @@ logger.LogInformation("Starting Rag-A-Muffin application...");
 Directory.CreateDirectory("/app/data/tokens");
 Directory.CreateDirectory("/app/data/uploads");
 Directory.CreateDirectory("/app/data/watch");
-Directory.CreateDirectory("/app/data/chats");
 
 var initializer = app.Services.GetRequiredService<QdrantCollectionInitializer>();
 await initializer.InitializeAsync();
@@ -368,6 +375,14 @@ app.MapDelete("/chats/{id}", async (string id, ChatSessionService chatService) =
     return Results.Ok(new { deleted = id });
 });
 
+app.MapGet("/chats/search", async (HttpRequest req, ChatSessionService chatService) =>
+{
+    var q = req.Query["q"].ToString();
+    if (string.IsNullOrWhiteSpace(q)) return Results.BadRequest(new { message = "q is required" });
+    var results = await chatService.SearchAsync(q);
+    return Results.Ok(results.Select(s => new { s.Id, s.Title, s.UpdatedAt }));
+});
+
 // ── Index management endpoints ────────────────────────────────────────────────
 
 app.MapGet("/index/stats", async (IVectorStore store, CancellationToken ct) =>
@@ -393,6 +408,194 @@ app.MapDelete("/index/source/{sourceType}", async (string sourceType, IVectorSto
     await store.DeleteBySourceTypeAsync(sourceType, ct);
     logger.LogInformation("All '{SourceType}' documents deleted from index", sourceType);
     return Results.Ok(new { deleted = sourceType });
+});
+
+app.MapPost("/index/documents/{documentId}/reindex", async (
+    string documentId, IVectorStore store, IIngestionPipeline pipeline,
+    IHttpClientFactory httpClientFactory, IEnumerable<IDocumentExtractor> extractors,
+    CancellationToken ct) =>
+{
+    var chunk = await store.GetFirstChunkAsync(documentId, ct);
+    if (chunk is null)
+        return Results.NotFound(new { message = "Document not found in index." });
+
+    logger.LogInformation("Re-indexing [{SourceType}] '{Title}' ({DocumentId})", chunk.SourceType, chunk.Title, documentId);
+
+    switch (chunk.SourceType)
+    {
+        case "web":
+        {
+            if (string.IsNullOrWhiteSpace(chunk.Url))
+                return Results.BadRequest(new { message = "Document has no URL — cannot re-fetch." });
+
+            var client = httpClientFactory.CreateClient("web");
+            string html;
+            try { html = await client.GetStringAsync(chunk.Url, ct); }
+            catch (Exception ex) { return Results.Problem($"Failed to fetch URL: {ex.Message}"); }
+
+            var htmlDoc = new HtmlAgilityPack.HtmlDocument();
+            htmlDoc.LoadHtml(html);
+            var garbage = htmlDoc.DocumentNode.SelectNodes("//script|//style|//nav|//footer|//header|//aside|//noscript");
+            if (garbage != null)
+                foreach (var node in garbage.ToList()) node.Remove();
+
+            var titleNode = htmlDoc.DocumentNode.SelectSingleNode("//title");
+            var pageTitle = HtmlAgilityPack.HtmlEntity.DeEntitize(titleNode?.InnerText?.Trim() ?? chunk.Title);
+            var rawText   = htmlDoc.DocumentNode.InnerText;
+            var text      = System.Text.RegularExpressions.Regex.Replace(rawText, @"[ \t]{2,}", " ");
+            text          = System.Text.RegularExpressions.Regex.Replace(text, @"\n{3,}", "\n\n").Trim();
+
+            if (string.IsNullOrWhiteSpace(text))
+                return Results.UnprocessableEntity(new { message = "Page returned no usable text." });
+
+            await store.DeleteByDocumentIdAsync(documentId, ct);
+
+            var host = Uri.TryCreate(chunk.Url, UriKind.Absolute, out var uri) ? uri.Host : chunk.Url;
+            await pipeline.IngestAsync([new SourceDocument
+            {
+                Id          = documentId,
+                SourceType  = "web",
+                Title       = string.IsNullOrWhiteSpace(pageTitle) ? chunk.Title : pageTitle,
+                Author      = host,
+                Url         = chunk.Url,
+                Body        = text,
+                PublishedAt = DateTime.UtcNow,
+                Metadata    = new Dictionary<string, string> { ["scrapedAt"] = DateTime.UtcNow.ToString("O") }
+            }], ct);
+
+            logger.LogInformation("Re-indexed web document: {Url}", chunk.Url);
+            return Results.Ok(new { reindexed = documentId });
+        }
+
+        case "local":
+        {
+            var filePath = chunk.Metadata.GetValueOrDefault("filePath");
+            if (string.IsNullOrWhiteSpace(filePath))
+                return Results.BadRequest(new { message = "Document has no file path in metadata." });
+            if (!File.Exists(filePath))
+                return Results.BadRequest(new { message = $"File no longer exists at '{filePath}'." });
+
+            var ext       = Path.GetExtension(filePath).ToLowerInvariant();
+            var extractor = extractors.FirstOrDefault(e => e.CanHandle(ext));
+            if (extractor is null)
+                return Results.BadRequest(new { message = $"No extractor for '{ext}'." });
+
+            string text;
+            try
+            {
+                await using var stream = File.OpenRead(filePath);
+                text = await extractor.ExtractAsync(stream, ct);
+            }
+            catch (Exception ex) { return Results.Problem($"Failed to read file: {ex.Message}"); }
+
+            if (string.IsNullOrWhiteSpace(text))
+                return Results.UnprocessableEntity(new { message = "File returned no usable text." });
+
+            await store.DeleteByDocumentIdAsync(documentId, ct);
+
+            await pipeline.IngestAsync([new SourceDocument
+            {
+                Id          = documentId,
+                SourceType  = "local",
+                Title       = chunk.Title,
+                Author      = "local",
+                Body        = text,
+                PublishedAt = File.GetLastWriteTimeUtc(filePath),
+                Metadata    = chunk.Metadata
+            }], ct);
+
+            logger.LogInformation("Re-indexed local document: {FilePath}", filePath);
+            return Results.Ok(new { reindexed = documentId });
+        }
+
+        default:
+            return Results.BadRequest(new { message = $"Re-index is not supported for '{chunk.SourceType}' documents. Use Sync All to refresh this source type." });
+    }
+});
+
+// ── Retrieval preview ─────────────────────────────────────────────────────────
+
+app.MapPost("/query/preview", async (QueryRequest request, IEmbeddingService embedder, IVectorStore store, CancellationToken ct) =>
+{
+    var vec    = await embedder.EmbedAsync(request.Query, ct);
+    var chunks = await store.SearchAsync(vec, request.TopK, request.SourceTypes, request.DateFrom, request.DateTo, ct);
+    return Results.Ok(chunks.Select(c => new
+    {
+        c.DocumentId, c.SourceType, c.Title, c.Author, c.PublishedAt, c.Score,
+        preview = c.Text.Length > 300 ? c.Text[..300] + "…" : c.Text
+    }));
+});
+
+// ── Chunk viewer ──────────────────────────────────────────────────────────────
+
+app.MapGet("/index/documents/{documentId}/chunks", async (string documentId, IVectorStore store, CancellationToken ct) =>
+{
+    var chunks = await store.GetChunksAsync(documentId, ct);
+    return Results.Ok(chunks.Select((c, i) => new { index = i, length = c.Text.Length, text = c.Text }));
+});
+
+// ── Find similar ──────────────────────────────────────────────────────────────
+
+app.MapPost("/index/documents/{documentId}/similar", async (
+    string documentId, IVectorStore store, IEmbeddingService embedder, CancellationToken ct) =>
+{
+    var seed = await store.GetFirstChunkAsync(documentId, ct);
+    if (seed is null) return Results.NotFound(new { message = "Document not found." });
+    var vec  = await embedder.EmbedAsync(seed.Text, ct);
+    var hits = await store.SearchAsync(vec, 10, null, null, null, ct);
+    return Results.Ok(hits.Where(h => h.DocumentId != documentId)
+        .Select(h => new { h.DocumentId, h.SourceType, h.Title, h.Author, h.PublishedAt, h.Score }));
+});
+
+// ── Sync log endpoints ────────────────────────────────────────────────────────
+
+app.MapGet("/synclog", (SyncLogService syncLog) => Results.Ok(syncLog.GetRecent(200)));
+app.MapGet("/synclog/latest", (SyncLogService syncLog) => Results.Ok(syncLog.GetLatestPerConnector()));
+
+// ── Notes endpoints ───────────────────────────────────────────────────────────
+
+app.MapGet("/notes", (NoteService noteService) => Results.Ok(noteService.List()));
+
+app.MapGet("/notes/{id}", (string id, NoteService noteService) =>
+{
+    var note = noteService.Get(id);
+    return note is null ? Results.NotFound() : Results.Ok(note);
+});
+
+app.MapPost("/notes", async (Note note, NoteService noteService, IIngestionPipeline pipeline, CancellationToken ct) =>
+{
+    var saved = noteService.Save(note);
+    await pipeline.IngestAsync([new SourceDocument
+    {
+        Id          = $"note-{saved.Id}",
+        SourceType  = "note",
+        Title       = saved.Title,
+        Author      = "me",
+        Body        = saved.Body,
+        PublishedAt = saved.UpdatedAt,
+        Metadata    = []
+    }], ct);
+    return Results.Ok(saved);
+});
+
+app.MapDelete("/notes/{id}", async (string id, NoteService noteService, IVectorStore store, CancellationToken ct) =>
+{
+    noteService.Delete(id);
+    await store.DeleteByDocumentIdAsync($"note-{id}", ct);
+    return Results.Ok(new { deleted = id });
+});
+
+// ── Bookmarks endpoints ───────────────────────────────────────────────────────
+
+app.MapGet("/bookmarks", (BookmarkService bookmarkService) => Results.Ok(bookmarkService.List()));
+
+app.MapPost("/bookmarks", (Bookmark bookmark, BookmarkService bookmarkService) =>
+    Results.Ok(bookmarkService.Save(bookmark)));
+
+app.MapDelete("/bookmarks/{id}", (string id, BookmarkService bookmarkService) =>
+{
+    bookmarkService.Delete(id);
+    return Results.Ok(new { deleted = id });
 });
 
 // ── Dev / admin endpoints ─────────────────────────────────────────────────────

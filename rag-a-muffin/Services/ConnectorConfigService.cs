@@ -1,20 +1,27 @@
+using RagAMuffin.Database;
 using System.Text.Json;
 
 namespace RagAMuffin.Services
 {
     public class ConnectorConfigService
     {
-        private readonly string _configPath = "/app/data/connectors.json";
+        private readonly AppDatabase _db;
         private readonly ILogger<ConnectorConfigService> _logger;
+        private readonly IConfiguration _config;
         private readonly SemaphoreSlim _saveLock = new(1, 1);
         private volatile ConnectorConfig _current;
 
+        private static readonly JsonSerializerOptions _jsonOpts =
+            new() { PropertyNameCaseInsensitive = true, WriteIndented = false };
+
         public ConnectorConfig Current => _current;
 
-        public ConnectorConfigService(ILogger<ConnectorConfigService> logger, IConfiguration config)
+        public ConnectorConfigService(AppDatabase db, ILogger<ConnectorConfigService> logger, IConfiguration config)
         {
+            _db      = db;
             _logger  = logger;
-            _current = LoadOrDefault(config);
+            _config  = config;
+            _current = LoadOrDefault();
         }
 
         public async Task<ConnectorConfig> SaveAsync(ConnectorConfig config)
@@ -22,10 +29,13 @@ namespace RagAMuffin.Services
             await _saveLock.WaitAsync();
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(_configPath)!);
-                var json = JsonSerializer.Serialize(config,
-                    new JsonSerializerOptions { WriteIndented = true });
-                await File.WriteAllTextAsync(_configPath, json);
+                var json = JsonSerializer.Serialize(config, _jsonOpts);
+                using var conn = _db.Open();
+                using var cmd  = conn.CreateCommand();
+                cmd.CommandText = "INSERT OR REPLACE INTO KV (Key, Value, UpdatedAt) VALUES ('connectors', $v, datetime('now'))";
+                cmd.Parameters.AddWithValue("$v", json);
+                cmd.ExecuteNonQuery();
+
                 _current = config;
                 _logger.LogInformation(
                     "Connector config saved: {Feeds} RSS feed(s), {Urls} web URL(s)",
@@ -38,15 +48,17 @@ namespace RagAMuffin.Services
             }
         }
 
-        private ConnectorConfig LoadOrDefault(IConfiguration config)
+        private ConnectorConfig LoadOrDefault()
         {
-            if (File.Exists(_configPath))
+            try
             {
-                try
+                using var conn = _db.Open();
+                using var cmd  = conn.CreateCommand();
+                cmd.CommandText = "SELECT Value FROM KV WHERE Key = 'connectors'";
+                var raw = cmd.ExecuteScalar() as string;
+                if (raw is not null)
                 {
-                    var json = File.ReadAllText(_configPath);
-                    var loaded = JsonSerializer.Deserialize<ConnectorConfig>(json,
-                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    var loaded = JsonSerializer.Deserialize<ConnectorConfig>(raw, _jsonOpts);
                     if (loaded is not null)
                     {
                         _logger.LogInformation(
@@ -55,19 +67,16 @@ namespace RagAMuffin.Services
                         return loaded;
                     }
                 }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to load connector config — using appsettings defaults");
-                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to load connector config — using appsettings defaults");
             }
 
-            // First-run: bootstrap from appsettings.json
             return new ConnectorConfig
             {
-                RssFeeds = config.GetSection("Connectors:Rss:Feeds")
-                               .Get<List<FeedEntry>>() ?? [],
-                WebUrls  = config.GetSection("Connectors:Web:Urls")
-                               .Get<List<FeedEntry>>() ?? []
+                RssFeeds = _config.GetSection("Connectors:Rss:Feeds").Get<List<FeedEntry>>() ?? [],
+                WebUrls  = _config.GetSection("Connectors:Web:Urls").Get<List<FeedEntry>>() ?? []
             };
         }
     }
@@ -76,13 +85,9 @@ namespace RagAMuffin.Services
     {
         public List<FeedEntry> RssFeeds { get; set; } = [];
         public List<FeedEntry> WebUrls  { get; set; } = [];
-        // Which connector source types are active. All enabled when list is empty or null.
         public List<string> EnabledConnectors { get; set; } = ["gmail", "drive", "calendar", "rss", "web", "local"];
-        // How often the background sync runs (minutes). 0 = use appsettings default.
         public int SyncIntervalMinutes { get; set; } = 0;
-        // Gmail label IDs to sync. Defaults to INBOX + SENT when empty.
         public List<string> GmailLabels { get; set; } = ["INBOX", "SENT"];
-        // Container paths to scan and index on each sync cycle.
         public List<string> LocalDirectories { get; set; } = [];
     }
 

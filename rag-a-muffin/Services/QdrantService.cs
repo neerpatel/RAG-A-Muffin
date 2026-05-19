@@ -177,6 +177,71 @@ namespace RagAMuffin.Services
             }, cancellationToken: ct);
         }
 
+        public async Task<ScoredChunk?> GetFirstChunkAsync(string documentId, CancellationToken ct = default)
+        {
+            var result = await _client.ScrollAsync(
+                CollectionName,
+                new Filter
+                {
+                    Must =
+                    {
+                        new Condition
+                        {
+                            Field = new FieldCondition
+                            {
+                                Key   = "documentId",
+                                Match = new Match { Keyword = documentId }
+                            }
+                        }
+                    }
+                },
+                1,
+                null,
+                (WithPayloadSelector)true,
+                null,
+                null,
+                null,
+                null,
+                ct);
+
+            var point = result.Result.FirstOrDefault();
+            return point is null ? null : MapPayload(point.Payload, 0f);
+        }
+
+        public async Task<List<ScoredChunk>> GetChunksAsync(string documentId, CancellationToken ct = default)
+        {
+            var chunks  = new List<ScoredChunk>();
+            PointId?    offset    = null;
+            const uint  batchSize = 100;
+            var filter = new Filter
+            {
+                Must =
+                {
+                    new Condition
+                    {
+                        Field = new FieldCondition
+                        {
+                            Key   = "documentId",
+                            Match = new Match { Keyword = documentId }
+                        }
+                    }
+                }
+            };
+
+            do
+            {
+                var scrollResult = await _client.ScrollAsync(
+                    CollectionName, filter, batchSize, offset,
+                    (WithPayloadSelector)true, null, null, null, null, ct);
+
+                chunks.AddRange(scrollResult.Result.Select(p => MapPayload(p.Payload, 0f)));
+                offset = scrollResult.NextPageOffset;
+            }
+            while (offset is not null);
+
+            return chunks.OrderBy(c => c.Metadata.GetValueOrDefault("chunkIndex")).ToList();
+        }
+
         public async Task<List<DocumentSummary>> ListDocumentsAsync(string? sourceType = null, CancellationToken ct = default)
         {
             var seen   = new Dictionary<string, DocumentSummary>(StringComparer.Ordinal);
