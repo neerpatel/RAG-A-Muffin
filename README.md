@@ -11,13 +11,14 @@
 
 ---
 
-A local, privacy-first RAG (Retrieval-Augmented Generation) system that runs on a Raspberry Pi or any homelab device. Connect your Gmail, Google Drive, Google Calendar, RSS feeds, websites, and documents, then ask questions about your life in a streaming chat UI — with everything staying on your hardware.
+A local, privacy-first RAG (Retrieval-Augmented Generation) system that runs on a Raspberry Pi or any homelab device. Connect your Gmail, Google Drive, Google Calendar, RSS feeds, websites, local directories, Obsidian vault, YouTube videos, GitHub repos, and browser bookmarks — then ask questions about your life in a streaming chat UI with inline citations, all staying on your hardware.
 
 ## Why RAG-A-Muffin?
 
 - **100% private** — your data never leaves your device. No cloud uploads, no third-party APIs processing your personal information.
 - **Local AI** — uses [Ollama](https://ollama.com) for on-device LLM inference and embeddings. Models run entirely locally.
-- **Multi-source** — Gmail, Drive, Calendar, RSS feeds, web scraping, local directories, file uploads, and a watch folder all feed into one searchable index.
+- **Multi-source** — Gmail, Drive, Calendar, RSS feeds, web scraping, local directories, Obsidian vaults, YouTube transcripts, GitHub repos, browser bookmarks, file uploads, and a watch folder all feed into one searchable index.
+- **Smarter retrieval** — parent-document context windows, optional query rewriting, and inline `[1]` `[2]` citations in every answer.
 - **Homelab-friendly** — designed to run on Raspberry Pi and other resource-constrained devices. GPU acceleration available for NVIDIA and AMD cards.
 
 ---
@@ -123,7 +124,7 @@ The app requests read-only access to Gmail, Drive, and Calendar in one authoriza
 
 ## Data Sources
 
-All sources funnel into the same vector store. Use the **source filter chips** in the chat UI to scope queries to a specific source type.
+All sources funnel into the same vector store. Use the **source filter chips** (behind the **Filters ▾** pill in the chat UI) to scope queries to a specific source type.
 
 ### Gmail
 
@@ -158,7 +159,7 @@ Event title, time, location, attendees, and description are all indexed.
 
 ### RSS / Atom Feeds
 
-Add feed URLs through the **Sources** panel (gear icon in the header) or in `appsettings.json`:
+Add feed URLs through the **Sources** panel or in `appsettings.json`:
 
 ```json
 "Rss": {
@@ -183,11 +184,11 @@ Scrape static pages and index their text content. Configure URLs through the **S
 }
 ```
 
-Pages are indexed once per URL. To re-index a changed page, remove the entry and re-add it (the URL-based document ID will be treated as new).
+Pages are indexed once per URL. To re-index a changed page, remove the entry and re-add it.
 
 ### Local Directory
 
-Index any directory bind-mounted into the container. Configure paths through the **Sources** panel — add the container-side path (e.g. `/app/data/docs`). On each sync cycle, all PDF, DOCX, and TXT files in the directory (and subdirectories) are indexed. Documents are deduplicated by file path, so only new or changed files create new index entries.
+Index any directory bind-mounted into the container. Configure paths through the **Sources** panel — add the container-side path (e.g. `/app/data/docs`). On each sync cycle, all PDF, DOCX, and TXT files in the directory and subdirectories are indexed. Documents are deduplicated by file path.
 
 Example `compose.yml` bind mount:
 
@@ -198,13 +199,49 @@ volumes:
 
 Then add `/app/data/docs` in the **Local Directories** section of the Sources panel.
 
+### Obsidian Vault
+
+Index a local Obsidian vault by bind-mounting the vault path into the container and registering it in the **Sources** panel.
+
+- **YAML frontmatter** — `title`, `date`, and `tags` are extracted and stored as metadata
+- **Wikilinks** — `[[Note Title]]` references are resolved to their text content
+- **Tags** — Obsidian `#tag` syntax is stripped to clean text before indexing
+
+Example bind mount:
+
+```yaml
+volumes:
+  - /home/user/vault:/app/data/obsidian:ro
+```
+
+Then add `/app/data/obsidian` in the **Obsidian Vaults** section of the Sources panel.
+
+### YouTube Transcripts
+
+Add YouTube video URLs in the **Sources** panel. Auto-captions are fetched from YouTube's timed-text API and indexed as searchable text. Videos that have no captions are skipped gracefully. No external packages — the transcript is fetched and parsed directly.
+
+### GitHub
+
+Index READMEs and issues from any public or private GitHub repository. Configure repos in the **Sources** panel as `owner/repo` entries.
+
+- **PAT support** — add a personal access token in Sources for private repos or higher rate limits
+- **Per-repo options** — toggle README, issues, and PRs independently
+
+### Browser Bookmarks
+
+Point at a Chrome or Firefox HTML bookmark export file (the standard Netscape bookmark format). Each bookmark URL is scraped and indexed. Configure the file path in the **Sources** panel.
+
 ### File Upload
 
-Click **Upload Doc** in the header to upload files directly from the browser. Supported formats: **PDF, DOCX, DOC, TXT, MD**. Files are deduplicated by content hash — uploading the same file twice is a no-op.
+Click **Upload Doc** in the `⋯` overflow menu to upload files directly from the browser. Supported formats: **PDF, DOCX, DOC, TXT, MD**. Files are deduplicated by content hash — uploading the same file twice is a no-op.
 
 ### Watch Folder
 
 Drop files into `./data/watch/` on the host and they're picked up and indexed automatically within seconds. Same format support as file upload.
+
+### Notes
+
+Create and edit personal notes directly in the app — open **Notes** from the `⋯` overflow menu. Notes are stored in SQLite and indexed into Qdrant as `sourceType: "note"`, so they're searchable alongside all other sources. Use the **Notes** filter chip to search notes exclusively.
 
 ---
 
@@ -212,29 +249,47 @@ Drop files into `./data/watch/` on the host and they're picked up and indexed au
 
 Type a question in the chat input and press Enter. The app:
 
-1. Embeds your query with `nomic-embed-text`
-2. Searches the vector store for the most relevant chunks
-3. Streams an answer from `llama3` using those chunks as context
-4. Shows clickable **source cards** below the answer — tap any card to preview the matched text
+1. Optionally rewrites your query into a keyword-rich search query (if **Query Rewriting** is enabled in Sources)
+2. Embeds the query with `nomic-embed-text`
+3. Searches the vector store for the most relevant chunks, retrieving a larger surrounding context window for each match (parent-document retrieval)
+4. Streams an answer from the LLM using those chunks as context
+5. Cites sources inline with `[1]`, `[2]` markers — clicking a marker scrolls to and highlights the matching source card
+6. Shows clickable **source cards** below the answer — tap any card to preview the matched text
+
+### Inline citations
+
+The LLM is instructed to cite sources using `[N]` markers wherever it draws on indexed content. After the response streams in, each marker becomes a clickable link that jumps to and highlights the corresponding source card at the bottom of the message.
+
+### Query rewriting
+
+Enable **Query Rewriting** in the Sources panel. Before embedding, the LLM rewrites your question into a precise, keyword-rich search query. Useful when your phrasing is vague or conversational and you want better recall from the vector store.
+
+### Parent-document retrieval
+
+Chunks are embedded small for embedding precision, but when retrieved, the LLM receives a larger surrounding context window (half a chunk on each side). This improves answer quality on long documents without sacrificing retrieval accuracy.
 
 ### Source filters
 
-Use the chips above the input to scope results:
+Click **Filters ▾** above the chat input to expand the filter bar. Only chips for your enabled connectors are shown.
 
 | Chip | Sources searched |
 |---|---|
 | All | Everything |
 | Email | Gmail |
-| Docs | Uploaded files and watch folder |
 | Drive | Google Drive |
 | Calendar | Google Calendar |
 | RSS | RSS / Atom feeds |
 | Web | Scraped web pages |
 | Local | Local directory files |
+| Notes | User-created notes |
+| Obsidian | Obsidian vault |
+| YouTube | YouTube transcripts |
+| GitHub | GitHub READMEs and issues |
+| Bookmarks | Scraped bookmark URLs |
 
 ### Date filter
 
-A second filter bar sits below the source chips. Click a date chip to restrict results to a recent time window:
+A date filter bar sits below the source chips (also behind the **Filters ▾** toggle). Click a chip to restrict results to a recent time window:
 
 | Chip | Window |
 |---|---|
@@ -244,23 +299,35 @@ A second filter bar sits below the source chips. Click a date chip to restrict r
 | 3mo | Last 3 months |
 | 1y | Last 12 months |
 
-The filter maps directly to Qdrant's `publishedAt` field — only documents indexed within that window are considered.
+When filters are collapsed, any active non-default filter (source ≠ All, date ≠ All time) is summarised inline next to the **Filters ▾** pill.
 
 ### TopK
 
-The **Results** selector (next to the date chips) controls how many document chunks are retrieved and sent to the LLM. Options: 4, 8, 12, 16, 24. A higher value gives the model more context but increases latency.
+The **Results** selector (in the filter bar) controls how many document chunks are retrieved and sent to the LLM. Options: 4, 8, 12, 16. A higher value gives the model more context but increases latency.
 
-### Managing RSS feeds and web URLs
+### Managing sources
 
-Click the **Sources** icon in the header to open the connector config panel. Add or remove RSS feeds and web URLs without editing any config files. You can either click **+ Add** after typing a URL, or just type the URL and click **Save changes** — the pending value is auto-added before saving. Changes take effect on the next sync cycle.
+Click **Sources** in the header to open the connector config panel. Add or remove RSS feeds, web URLs, Obsidian vaults, YouTube URLs, GitHub repos, and bookmark file paths without editing any config files. Changes take effect on the next sync cycle.
 
 ### Connector toggles
 
-Inside the Sources panel, toggle individual connectors on or off without removing their configuration. Disabled connectors are skipped during every sync cycle (scheduled and manual). Toggle state persists to `./data/app.db`.
+Inside the Sources panel, toggle individual connectors on or off without removing their configuration. Disabled connectors are skipped during every sync cycle (scheduled and manual). The source filter bar automatically reflects which connectors are enabled — disabled connectors have no chip. Toggle state persists to `./data/app.db`.
+
+### Custom system prompt
+
+Edit the system prompt in the Sources panel. Use `{today}` as a placeholder for the current date. Click **Reset to default** to restore the original prompt.
+
+### Chat-only mode
+
+Toggle **No retrieval** in the Sources panel (or inline per query) to send messages directly to the LLM without searching the index. Useful for general questions where you don't want document context.
+
+### Quick prompts
+
+Configure shortcut chips in the Sources panel under **Quick Prompts**. They appear above the chat input and pre-fill common queries with one click.
 
 ### Sync interval
 
-Set the background sync frequency from the Sources panel (0 = disabled, or any positive number of minutes). The change is applied immediately to the running sync loop — no restart required.
+Set the background sync frequency from the Sources panel (0 = disabled, or any positive number of minutes). The change is applied immediately — no restart required.
 
 ### LLM model
 
@@ -268,128 +335,95 @@ The Sources panel includes a **Model** dropdown populated from Ollama's availabl
 
 ### Manual sync
 
-Click **Sync All** in the header to immediately run all connectors (Gmail, Drive, Calendar, RSS, web). Useful after adding a new source or when you want fresh data without waiting for the next scheduled sync.
+Click **Sync All** in the header to immediately run all enabled connectors. Useful after adding a new source or when you want fresh data without waiting for the next scheduled sync.
 
 ### Conversation memory
 
-Each Q&A turn is automatically added to the current session's context. Follow-up questions like "what about the one from last week?" or "can you summarise that differently?" work without repeating yourself.
+Each Q&A turn is automatically added to the current session's context. Follow-up questions like "what about the one from last week?" work without repeating yourself.
 
 - **Auto-save** — sessions are saved to SQLite (`./data/app.db`) after every response and restored on page reload.
-- **History panel** — click the **History** (clock) icon to browse past sessions. Click any session to restore the full conversation.
-- **New chat** — click **+ New Chat** inside the history panel, or the **new chat** link in the input bar, to start a fresh session without losing the old one.
-- The last 5 Q&A turns (10 messages) are sent as context with each query. Older turns remain visible in the UI and saved to disk, but are not re-sent to avoid prompt bloat.
+- **History panel** — click **History** in the header to browse past sessions. Click any session to restore the full conversation. Search sessions by title or content with the search box.
+- **New chat** — click **+ New Chat** inside the history panel to start a fresh session without losing the old one.
+- The last 5 Q&A turns are sent as context with each query. Older turns remain visible in the UI but are not re-sent.
+
+### Saved answers
+
+Click the bookmark icon on any assistant response to save it to **Saved Answers** (accessible from the `⋯` overflow menu). Saved answers persist to SQLite.
 
 ### Index browser
 
-Click the **Index** (database) icon in the header to open the document index panel. The badge on the button shows the total number of indexed documents at a glance, and turns amber when the index is empty.
+Open **Index** from the `⋯` overflow menu to browse all indexed documents.
 
-Inside the panel:
+- **Stats bar** — chip per source type with its document count
+- **Search and filter** — type to filter by title, or pick a source type from the dropdown
+- **Document list** — every indexed document with source badge, title, author, date, and chunk count
+- **Delete a document** — trash icon on any row removes it and all its chunks from Qdrant
+- **Delete all by type** — click the × on a stat chip to bulk-remove a source type
 
-- **Stats bar** — shows a chip per source type with its document count (gmail, drive, rss, etc.)
-- **Search and filter** — type to filter by title, or pick a source type from the dropdown to narrow the list
-- **Document list** — every indexed document with its source badge, title, author, date, and chunk count
-- **Delete a document** — click the trash icon on any row to remove that document and all its chunks from Qdrant
-- **Delete all by type** — click the × on a stat chip to bulk-remove every document of that source type
+### URL hash routing
+
+Panels update `location.hash` — direct links like `/index.html#sources` open the correct panel, and browser back/forward navigation works as expected.
 
 ### Copy an answer
 
-Every assistant response has a **copy** button that appears on hover. Click it to copy the full answer text to the clipboard. The button briefly shows "copied!" to confirm.
+Every assistant response has a **copy** button that appears on hover. Copies the full answer text to the clipboard.
 
 ### Light mode
 
-Click the **sun/moon** icon in the header to switch between dark and light themes. The preference is saved in localStorage and restored on next visit.
+Click the **sun/moon** icon in the header to switch between dark and light themes. The preference is saved in localStorage.
 
 ### Keyboard shortcuts
 
 | Shortcut | Action |
 |---|---|
 | `Ctrl/Cmd + K` | Focus the chat input from anywhere |
-| `Esc` | Close any open panel (Sources, Status, History, Index, Logs, Dev) |
+| `Esc` | Close any open panel |
 
 ### Dev Tools
 
-Click the **Dev** (wrench) icon in the header to open the Dev Tools panel. From here you can:
+Open **Dev Tools** from the `⋯` overflow menu:
 
 - **Restart** — exit and let Docker's `restart: unless-stopped` bring the container back up with the same image. Use this after changing `appsettings.json` or environment variables.
-- **Rebuild** — compile a new image from source and restart. Use this after changing C# or frontend code. The UI shows a reconnecting spinner and resumes automatically when the new container is ready.
+- **Rebuild** — compile a new image from source and restart. Use this after changing C# or frontend code. The UI shows a reconnecting spinner and resumes automatically.
 
 ---
 
 ## Examples
-
-### What the UI looks like
-
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│ 🧁 rag-a-muffin    ● local  [will@gmail.com ✕]                       │
-│ [Status] [Sources] [Logs] [Upload Doc] [Sync All] [Index 42] [Hist] [Dev] │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  YOU                                                                 │
-│  ╔════════════════════════════════════════════╗                      │
-│  ║ What's on my calendar this week?           ║                      │
-│  ╚════════════════════════════════════════════╝                      │
-│                                                                      │
-│  MUFFIN                                                              │
-│  ┌────────────────────────────────────────────┐                      │
-│  │ You have three events this week:           │                      │
-│  │                                            │                      │
-│  │ • Monday 2pm — Dentist appointment         │                      │
-│  │ • Wednesday 10am — Team standup with       │                      │
-│  │   Sarah, James, and Kim                    │                      │
-│  │ • Friday 7pm — Dinner at The Capital       │                      │
-│  └────────────────────────────────────────────┘                      │
-│                                                                      │
-│  SOURCES                                                             │
-│  ┌─────────────────────┐  ┌─────────────────────┐                   │
-│  │ Dentist Appointment │  │ Team Standup        │                   │
-│  │ May 19, 2026        │  │ May 21, 2026        │                   │
-│  │ ↗ CALENDAR          │  │ ↗ CALENDAR          │                   │
-│  └─────────────────────┘  └─────────────────────┘                   │
-│                                                                      │
-├──────────────────────────────────────────────────────────────────────┤
-│ source  [All] [Email] [Docs] [Drive] [Calendar] [RSS] [Web]          │
-│ time    [All time] [7d] [30d] [3mo] [1y]    Results [8 ▾]           │
-│ ┌──────────────────────────────────────────────────────────────────┐ │
-│ │ Ask about your docs, emails, anything...                      ↵  │ │
-│ └──────────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────────┘
-```
 
 ### Example queries
 
 **Calendar**
 > What's on my calendar this week?
 
-*You have three events this week: a dentist appointment Monday at 2pm, a team standup Wednesday at 10am with Sarah, James, and Kim, and dinner Friday at 7pm.*
+*You have three events this week: a dentist appointment Monday at 2pm [1], a team standup Wednesday at 10am with Sarah, James, and Kim [2], and dinner Friday at 7pm [3].*
 
 ---
 
 **Email**
 > Has anyone emailed me about the kitchen renovation quote?
 
-*Yes — on May 8th, Riverside Contracting sent you a quote for $14,200 covering cabinet replacement and tile work. They asked for a response by the 20th.*
+*Yes — on May 8th, Riverside Contracting sent you a quote for $14,200 covering cabinet replacement and tile work [1]. They asked for a response by the 20th.*
 
 ---
 
-**Google Drive**
-> Summarise my Q1 planning document.
+**Obsidian**
+> Summarise my notes on the Zettelkasten method.
 
-*Your Q1 plan (last edited March 3rd) outlines three priorities: launching the new onboarding flow, migrating the database to Postgres, and reducing support ticket volume by 20%. The owner is listed as you, with a review date of April 1st.*
+*Your note "Zettelkasten Overview" (tagged #pkm #notes) describes the slip-box method as a network of atomic ideas linked by reference [1]. A follow-up note "Linking Notes" expands on how connections between cards generate emergent insights [2].*
+
+---
+
+**YouTube**
+> What did the Andrej Karpathy video say about tokenisation?
+
+*In the tokenisation video, Karpathy explains that BPE merges the most frequent byte pairs iteratively [1]. He notes that tokenisation is the root cause of many LLM quirks — counting letters, reversing strings, and spelling tasks all break at the token boundary [2].*
 
 ---
 
 **Mixed sources**
 > Have I discussed the house budget anywhere?
 
-*I found references in two places: a Gmail thread from April with your partner titled "House reno budget" mentioning a $40k cap, and a Google Doc called "2026 Finances" that includes a home improvement line item of $35,000.*
-
----
-
-**RSS**
-> What's the latest in AI this week?
-
-*Based on your feeds, the main stories this week are Meta's release of Llama 4, a new benchmark showing o3 outperforming humans on ARC-AGI, and a Wired piece on the energy cost of large-scale inference.*
+*I found references in two places: a Gmail thread from April titled "House reno budget" mentioning a $40k cap [1], and a Google Doc called "2026 Finances" that includes a home improvement line item of $35,000 [2].*
 
 ---
 
@@ -412,27 +446,33 @@ docker compose -f docker-compose.yml -f docker-compose.amd.yml up -d
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    RAG-A-Muffin (.NET 8)                        │
-│                                                                  │
-│  ┌──────────────┐  ┌─────────────────┐  ┌──────────────────┐   │
-│  │  Chat UI     │  │  Connectors     │  │  Ingestion       │   │
-│  │  (SSE stream)│  │  Gmail          │  │  Chunker         │   │
-│  │  Source chips│  │  Drive          │  │  Embedder        │   │
-│  │  Citations   │  │  Calendar       │  │  Deduplication   │   │
-│  │  Sources mgr │  │  RSS / Web      │  │  Vector upsert   │   │
-│  └──────────────┘  │  File / Watch   │  └──────────────────┘   │
-│                    └─────────────────┘                          │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-              ┌──────────────┴──────────────┐
-              ▼                             ▼
-        ┌───────────┐               ┌─────────────┐
-        │  Qdrant   │               │   Ollama    │
-        │  Vector   │               │  llama3     │
-        │  Database │               │  nomic-     │
-        │           │               │  embed-text │
-        └───────────┘               └─────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                      RAG-A-Muffin (.NET 8)                          │
+│                                                                      │
+│  ┌──────────────┐  ┌───────────────────────────┐  ┌──────────────┐  │
+│  │  Chat UI     │  │  Connectors               │  │  Ingestion   │  │
+│  │  SSE stream  │  │  Gmail / Drive / Calendar │  │  Chunker     │  │
+│  │  Citations   │  │  RSS / Web / Local        │  │  Parent ctx  │  │
+│  │  Source chips│  │  Obsidian / YouTube       │  │  Embedder    │  │
+│  │  Sources mgr │  │  GitHub / Bookmarks       │  │  Dedup       │  │
+│  └──────────────┘  │  File Upload / Watch      │  │  Upsert      │  │
+│                    └───────────────────────────┘  └──────────────┘  │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐    │
+│  │  SQLite (./data/app.db)                                      │    │
+│  │  ChatSessions · ChatMessages · Notes · Bookmarks            │    │
+│  │  KV (connector config, settings) · SyncLog                  │    │
+│  └──────────────────────────────────────────────────────────────┘    │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │
+                ┌──────────────┴──────────────┐
+                ▼                             ▼
+          ┌───────────┐               ┌─────────────┐
+          │  Qdrant   │               │   Ollama    │
+          │  Vector   │               │  llama3     │
+          │  Database │               │  nomic-     │
+          │           │               │  embed-text │
+          └───────────┘               └─────────────┘
 ```
 
 **Models used:**
@@ -440,7 +480,7 @@ docker compose -f docker-compose.yml -f docker-compose.amd.yml up -d
 | Role | Model |
 |---|---|
 | Embeddings | `nomic-embed-text` (768-dim, Int8 quantized in Qdrant) |
-| Inference (streaming) | `llama3` |
+| Inference (streaming) | `llama3` (configurable from Sources panel) |
 
 Both models run locally via Ollama and are pulled automatically on first start.
 
@@ -448,7 +488,7 @@ Both models run locally via Ollama and are pulled automatically on first start.
 
 ## Configuration
 
-`appsettings.json` controls infrastructure settings. Connector sources (RSS feeds, web URLs) can also be managed through the **Sources** UI, which persists to `./data/connectors.json`.
+`appsettings.json` controls infrastructure settings. Connector sources are managed through the **Sources** UI and persisted to `./data/app.db`.
 
 ```json
 {
@@ -464,20 +504,10 @@ Both models run locally via Ollama and are pulled automatically on first start.
     "MaxEmailsPerSync": 100
   },
   "Connectors": {
-    "Rss": {
-      "Feeds": []
-    },
-    "Web": {
-      "Urls": []
-    },
-    "Drive": {
-      "FolderIds": [],
-      "MaxFiles": 50
-    },
-    "Calendar": {
-      "DaysBack": 30,
-      "DaysAhead": 7
-    }
+    "Rss": { "Feeds": [] },
+    "Web": { "Urls": [] },
+    "Drive": { "FolderIds": [], "MaxFiles": 50 },
+    "Calendar": { "DaysBack": 30, "DaysAhead": 7 }
   }
 }
 ```
@@ -490,14 +520,14 @@ All persistent data lives in `./data/` on the host:
 
 | Path | Contents |
 |---|---|
-| `./data/app.db` | SQLite database — chat sessions, connector config, settings, sync log, notes, bookmarks |
+| `./data/app.db` | SQLite — chat sessions, connector config, settings, sync log, notes, bookmarks |
 | `./data/tokens/` | Google OAuth refresh tokens |
 | `./data/uploads/` | Uploaded files |
 | `./data/watch/` | Watch folder (drop files here for auto-ingestion) |
 | `qdrant_data` (Docker volume) | Vector embeddings |
 | `ollama_data` (Docker volume) | Downloaded models |
 
-> **Backup**: `cp data/app.db backup/app.db` is all you need. The SQLite WAL file is flushed on each write so a copy is always safe. Legacy JSON files (`connectors.json`, `settings.json`, `chats/`) are imported automatically on first boot and can be removed after migration.
+> **Backup**: `cp data/app.db backup/app.db` is all you need. The SQLite WAL file is flushed on each write so a copy is always safe.
 
 ---
 
@@ -511,24 +541,37 @@ All persistent data lives in `./data/` on the host:
 | `GET` | `/oauth2callback` | OAuth redirect handler |
 | `POST` | `/query` | One-shot RAG query |
 | `POST` | `/query/stream` | Streaming RAG query (SSE) |
+| `POST` | `/query/preview` | Return chunks that would be sent to the LLM without calling it |
 | `POST` | `/ingest/upload` | Upload a file for ingestion |
 | `GET` | `/inbox?userId=` | Manually trigger a Gmail sync |
-| `GET` | `/config/connectors` | Get current RSS / web connector config |
-| `PUT` | `/config/connectors` | Save RSS / web connector config |
+| `GET` | `/config/connectors` | Get current connector config |
+| `PUT` | `/config/connectors` | Save connector config |
+| `GET` | `/config/settings` | Get current app settings |
+| `PUT` | `/config/settings` | Save app settings |
+| `GET` | `/config/models` | List models available in Ollama |
 | `GET` | `/logs` | Fetch recent application log entries |
-| `POST` | `/sync` | Immediately run all connectors (same as **Sync All** button) |
-| `GET` | `/chats` | List all saved chat sessions (id, title, date, message count) |
+| `GET` | `/synclog` | Get full sync log |
+| `GET` | `/synclog/latest` | Get most recent sync run per connector |
+| `POST` | `/sync` | Immediately run all enabled connectors |
+| `GET` | `/chats` | List all saved chat sessions |
 | `GET` | `/chats/{id}` | Get a full session including all messages |
 | `POST` | `/chats` | Create or update a session |
 | `DELETE` | `/chats/{id}` | Delete a session |
+| `GET` | `/chats/search?q=` | Full-text search across session titles and messages |
 | `GET` | `/index/stats` | Total vector count and per-source-type document counts |
-| `GET` | `/index/documents` | List all indexed documents (`?source=gmail` to filter by type) |
-| `DELETE` | `/index/documents/{id}` | Remove a document and all its chunks by document ID |
-| `DELETE` | `/index/source/{type}` | Bulk-remove all documents of a given source type |
-| `GET` | `/config/settings` | Get current app settings (active LLM model) |
-| `PUT` | `/config/settings` | Save app settings; takes effect on the next query |
-| `GET` | `/config/models` | List models available in Ollama (for the model selector) |
-| `POST` | `/admin/restart` | Exit the process; Docker restarts the container with the current image |
+| `GET` | `/index/documents` | List all indexed documents (`?source=` to filter) |
+| `DELETE` | `/index/documents/{id}` | Remove a document and all its chunks |
+| `DELETE` | `/index/source/{type}` | Bulk-remove all documents of a source type |
+| `GET` | `/index/documents/{id}/chunks` | Return all chunks for a document |
+| `POST` | `/index/documents/{id}/similar` | Find semantically similar documents |
+| `GET` | `/notes` | List all notes |
+| `POST` | `/notes` | Create a note |
+| `PUT` | `/notes/{id}` | Update a note |
+| `DELETE` | `/notes/{id}` | Delete a note |
+| `GET` | `/bookmarks` | List all saved answers |
+| `POST` | `/bookmarks` | Save an answer |
+| `DELETE` | `/bookmarks/{id}` | Delete a saved answer |
+| `POST` | `/admin/restart` | Exit the process; Docker restarts the container |
 | `POST` | `/admin/rebuild` | Build a new image from source, then restart |
 
 Swagger UI is available at **http://localhost:8000/swagger** in development mode.
@@ -540,40 +583,62 @@ Swagger UI is available at **http://localhost:8000/swagger** in development mode
 ```
 rag-a-muffin/
 ├── Auth/
-│   └── VendorAuth.cs          # Google OAuth (Gmail, Drive, Calendar)
-├── Models/                    # Shared data models
-│   ├── SourceDocument.cs      # Common document model for all connectors
-│   ├── EmbeddedChunk.cs       # Vector store payload
-│   ├── ScoredChunk.cs         # Search result
-│   ├── DocumentSummary.cs     # Per-document metadata for the index browser
-│   ├── IndexStats.cs          # Total vectors + per-source-type counts
-│   ├── ChatMessage.cs         # Single conversation turn (role + content)
-│   ├── ChatSession.cs         # Saved conversation with messages
-│   ├── AppSettings.cs         # LLM model preference
-│   └── QueryRequest.cs        # Query + source type filter + history + date range
+│   └── VendorAuth.cs               # Google OAuth (Gmail, Drive, Calendar)
+├── Database/
+│   └── AppDatabase.cs              # SQLite schema, migrations, connection factory
+├── Models/
+│   ├── SourceDocument.cs
+│   ├── TextChunk.cs                # Chunk with optional ParentText context window
+│   ├── EmbeddedChunk.cs
+│   ├── ScoredChunk.cs
+│   ├── DocumentSummary.cs
+│   ├── IndexStats.cs
+│   ├── ChatMessage.cs
+│   ├── ChatSession.cs
+│   ├── AppSettings.cs              # LLM model, system prompt, query rewriting flag
+│   └── QueryRequest.cs
 ├── Qdrant/
-│   └── QdrantInitializer.cs   # Collection + index setup
+│   └── QdrantInitializer.cs
 ├── Services/
-│   ├── Interfaces/            # IConnector, IVectorStore, IRagQueryService, …
-│   ├── Connectors/            # GmailConnector, GoogleDriveConnector,
-│   │                          # GoogleCalendarConnector, RssConnector,
-│   │                          # WebConnector, LocalDirectoryConnector
-│   ├── Extractors/            # PdfExtractor, DocxExtractor, PlainTextExtractor
-│   ├── Logging/               # InMemoryLogBuffer + ILoggerProvider
-│   ├── ChatSessionService.cs      # Save/load chat sessions from ./data/chats/
-│   ├── ConnectorConfigService.cs  # Live RSS/web config (persisted to connectors.json)
-│   ├── ConnectorSyncService.cs    # BackgroundService: dynamic interval, connector toggles
-│   ├── SettingsService.cs         # App settings singleton (LLM model, persisted to settings.json)
-│   ├── FileWatcherService.cs      # BackgroundService: watches ./data/watch/
-│   ├── FileIngestionService.cs    # Upload handler
-│   ├── IngestionPipeline.cs       # Chunk → embed → upsert
-│   ├── RagQueryService.cs         # Embed query → vector search → LLM → stream
-│   ├── QdrantService.cs           # IVectorStore implementation
-│   └── UserProfileService.cs      # Singleton: active user identity
+│   ├── Interfaces/
+│   ├── Connectors/
+│   │   ├── GmailConnector.cs
+│   │   ├── GoogleDriveConnector.cs
+│   │   ├── GoogleCalendarConnector.cs
+│   │   ├── RssConnector.cs
+│   │   ├── WebConnector.cs
+│   │   ├── LocalDirectoryConnector.cs
+│   │   ├── ObsidianConnector.cs    # Vault indexing with frontmatter + wikilinks
+│   │   ├── YouTubeConnector.cs     # Transcript fetch via timed-text API
+│   │   ├── GitHubConnector.cs      # READMEs + issues via GitHub REST API
+│   │   └── BookmarksConnector.cs   # Netscape HTML bookmark export scraper
+│   ├── Extractors/
+│   ├── Logging/
+│   ├── ChatSessionService.cs
+│   ├── ConnectorConfigService.cs
+│   ├── ConnectorSyncService.cs
+│   ├── SettingsService.cs
+│   ├── NoteService.cs
+│   ├── BookmarkService.cs
+│   ├── SyncLogService.cs
+│   ├── ChunkService.cs             # Word-based chunker with parent context windows
+│   ├── FileWatcherService.cs
+│   ├── FileIngestionService.cs
+│   ├── IngestionPipeline.cs
+│   ├── RagQueryService.cs          # Query rewriting + inline citation prompt
+│   ├── QdrantService.cs
+│   └── UserProfileService.cs
 ├── wwwroot/
-│   └── index.html             # Single-page chat UI
-├── Program.cs                 # Service registration + minimal API endpoints
+│   └── index.html                  # Single-page chat UI
+├── Properties/
+│   └── AssemblyInfo.cs             # InternalsVisibleTo for test project
+├── Program.cs
 └── appsettings.json
+
+rag-a-muffin.Tests/
+├── ChunkerTests.cs                 # TextChunker unit tests incl. parent window
+├── ObsidianConnectorTests.cs       # Frontmatter, wikilink, tag parsing
+└── ChatSessionServiceTests.cs      # CRUD + search against in-memory SQLite
 ```
 
 ---
@@ -601,7 +666,15 @@ docker compose up --build api
 
 Qdrant and Ollama continue running and don't need to restart.
 
-You can also trigger a rebuild from the browser via the **Dev → Rebuild** button — no terminal access required.
+You can also trigger a rebuild from the browser via **Dev Tools → Rebuild** in the `⋯` overflow menu — no terminal access required.
+
+### Run tests
+
+```bash
+dotnet test rag-a-muffin.Tests/
+```
+
+The test suite uses in-memory SQLite — no Docker or running services required.
 
 ### Tail logs per service
 
@@ -631,21 +704,16 @@ docker compose logs -f ollama
 
 **Drive or Calendar not syncing** — these require scopes that weren't in the original Gmail-only authorization. Sign out in the UI and re-authorize to grant all three scopes at once.
 
-**Port conflicts on startup** — if you have a stale stack from a previous run using a different project name, you may see `port is already allocated` errors. Stop and remove all old containers first:
+**YouTube videos not indexing** — the video has no auto-generated captions, or captions are disabled by the uploader. The connector skips these gracefully and logs the reason.
+
+**GitHub rate limit errors** — unauthenticated requests are limited to 60/hour. Add a personal access token in the Sources panel to raise the limit.
+
+**Port conflicts on startup** — if you have a stale stack from a previous run:
 ```bash
-docker compose down        # removes rag-a-muffin project containers
-docker ps -a               # find any lingering containers from old project names
-docker rm -f <name>        # remove them
+docker compose down
+docker ps -a               # find any lingering containers
+docker rm -f <name>
 docker compose up -d
-```
-
-**Check which process is using a port:**
-```bash
-# Linux / macOS
-lsof -i :8000
-
-# Windows
-netstat -ano | findstr :8000
 ```
 
 **Force a full reset (deletes all data):**
