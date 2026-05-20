@@ -10,7 +10,7 @@ namespace RagAMuffin.Database
     public class AppDatabase
     {
         public const string DbPath = "/app/data/app.db";
-        public string ConnectionString { get; } = $"Data Source={DbPath}";
+        public string ConnectionString { get; } = $"Data Source={DbPath};Cache=Shared";
 
         private readonly ILogger<AppDatabase> _logger;
         private readonly IConfiguration _config;
@@ -22,6 +22,15 @@ namespace RagAMuffin.Database
             Directory.CreateDirectory("/app/data");
             InitializeSchema();
             RunJsonMigrations();
+        }
+
+        // Test constructor — accepts a connection string directly, skips file migration
+        internal AppDatabase(ILogger<AppDatabase> logger, string connectionString)
+        {
+            _logger = logger;
+            _config = null!;
+            ConnectionString = connectionString;
+            InitializeSchema();
         }
 
         public SqliteConnection Open()

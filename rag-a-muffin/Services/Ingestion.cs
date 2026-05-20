@@ -69,6 +69,7 @@ namespace RagAMuffin.Services
                         ChunkIndex  = chunk.Index,
                         TotalChunks = chunk.TotalChunks,
                         Text        = chunk.Text,
+                        ParentText  = chunk.ParentText,
                         Vector      = vector
                     }, ct);
                 }

@@ -5,6 +5,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.0.0] - 2026-05-20
+
+### Added
+- **Inline citations** — LLM now cites sources with `[1]`, `[2]` markers inline in its answers; clicking a marker scrolls to and highlights the corresponding source card
+- **Parent-document retrieval** — chunks are still embedded small for precision, but the LLM receives a larger surrounding context window (half a chunk on each side); improves answer quality on long documents
+- **Query rewriting** — optional toggle in Sources panel; before embedding, the LLM rewrites the user's question into a precise, keyword-rich search query; improves recall for vague phrasing
+- **Obsidian vault connector** — bind-mount a vault path; indexes all `.md` files with YAML frontmatter parsing (title, date, tags), wikilink resolution (`[[Note]]` → text), and Obsidian-style tag stripping
+- **YouTube transcript connector** — add YouTube video URLs in Sources panel; auto-captions are fetched and indexed as searchable text; videos without captions are skipped gracefully
+- **GitHub connector** — index READMEs and issues from any public or private (with PAT) GitHub repo; configured as `owner/repo` entries in Sources panel
+- **Browser bookmarks connector** — point at a Chrome/Firefox HTML bookmark export; each bookmark URL is scraped and indexed
+- **URL hash routing** — panels now update the browser URL (`#history`, `#notes`, `#sources`, etc.); back/forward navigation and direct links to panels work as expected
+- **Integration test suite** — xUnit project with 19 tests covering `TextChunker`, `ObsidianConnector` parsing, and `ChatSessionService` CRUD/search against in-memory SQLite
+- Filter chips added for Obsidian, YouTube, GitHub, and Bookmarks sources
+
+### Changed
+- Prompt context limit raised from 800 to 1200 characters per chunk (parent window used when available)
+- System prompt now instructs the LLM to cite sources inline with `[N]` notation
+
+---
+
 ## [1.5.0] - 2026-05-19
 
 ### Added

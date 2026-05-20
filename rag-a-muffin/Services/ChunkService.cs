@@ -47,19 +47,28 @@ namespace RagAMuffin.Services
             var chunks = new List<TextChunk>(totalChunks);
             var index = 0;
             var position = 0;
+            var parentPadding = _chunkSize / 2;
 
             while (position < words.Length)
             {
                 var slice = words.Skip(position).Take(_chunkSize).ToArray();
                 var text = string.Join(' ', slice);
 
+                var parentStart = Math.Max(0, position - parentPadding);
+                var parentEnd   = Math.Min(words.Length, position + _chunkSize + parentPadding);
+                var parentSlice = words[parentStart..parentEnd];
+                var parentText  = parentSlice.Length > slice.Length
+                    ? string.Join(' ', parentSlice)
+                    : null; // no point storing if identical to chunk
+
                 chunks.Add(new TextChunk
                 {
-                    Text = text,
-                    Index = index++,
+                    Text       = text,
+                    ParentText = parentText,
+                    Index      = index++,
                     TotalChunks = totalChunks,
-                    CharStart = position,
-                    CharEnd = position + slice.Length
+                    CharStart  = position,
+                    CharEnd    = position + slice.Length
                 });
 
                 position += _chunkSize - _overlap;

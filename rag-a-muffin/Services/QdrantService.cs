@@ -38,6 +38,7 @@ namespace RagAMuffin.Services
                     ["chunkIndex"]  = chunk.ChunkIndex,
                     ["totalChunks"] = chunk.TotalChunks,
                     ["text"]        = chunk.Text,
+                    ["parentText"]  = chunk.ParentText ?? string.Empty,
                     ["metadata"]    = JsonSerializer.Serialize(chunk.Metadata)
                 }
             };
@@ -329,6 +330,8 @@ namespace RagAMuffin.Services
             var metadataRaw = payload.TryGetValue("metadata", out var m) ? m.StringValue : "{}";
             var metadata = JsonSerializer.Deserialize<Dictionary<string, string>>(metadataRaw) ?? new();
 
+            var parentRaw = payload.TryGetValue("parentText", out var pt) ? pt.StringValue : null;
+
             return new ScoredChunk
             {
                 DocumentId  = payload["documentId"].StringValue,
@@ -339,6 +342,7 @@ namespace RagAMuffin.Services
                 Url         = payload.TryGetValue("url", out var u) && !string.IsNullOrEmpty(u.StringValue) ? u.StringValue : null,
                 PublishedAt = payload["publishedAt"].StringValue,
                 Text        = payload["text"].StringValue,
+                ParentText  = string.IsNullOrEmpty(parentRaw) ? null : parentRaw,
                 Metadata    = metadata,
                 Score       = score
             };

@@ -3,6 +3,7 @@ namespace RagAMuffin.Models
     public class EmbeddedChunk
     {
         public required string Text { get; init; }
+        public string? ParentText { get; init; }
         public required int ChunkIndex { get; init; }
         public required int TotalChunks { get; init; }
 

@@ -88,7 +88,20 @@ namespace RagAMuffin.Services
         public List<string> EnabledConnectors { get; set; } = ["gmail", "drive", "calendar", "rss", "web", "local"];
         public int SyncIntervalMinutes { get; set; } = 0;
         public List<string> GmailLabels { get; set; } = ["INBOX", "SENT"];
-        public List<string> LocalDirectories { get; set; } = [];
+        public List<string> LocalDirectories  { get; set; } = [];
+        public List<string> ObsidianVaults    { get; set; } = [];
+        public List<string> YoutubeUrls       { get; set; } = [];
+        public List<GithubRepoEntry> GithubRepos { get; set; } = [];
+        public string? GithubToken            { get; set; }
+        public string? BookmarksFilePath      { get; set; }
+    }
+
+    public class GithubRepoEntry
+    {
+        public string Repo        { get; set; } = string.Empty; // "owner/repo"
+        public bool   IndexReadme { get; set; } = true;
+        public bool   IndexIssues { get; set; } = true;
+        public bool   IndexPRs    { get; set; } = false;
     }
 
     public class FeedEntry

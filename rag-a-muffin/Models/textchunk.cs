@@ -17,5 +17,8 @@ namespace RagAMuffin.Models
         // highlighting source text in a UI later
         public int CharStart { get; init; }
         public int CharEnd { get; init; }
+
+        // Larger surrounding window sent to the LLM for context; null means use Text
+        public string? ParentText { get; init; }
     }
 }
