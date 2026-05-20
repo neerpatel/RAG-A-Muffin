@@ -2,9 +2,10 @@ namespace RagAMuffin.Models
 {
     public class AppSettings
     {
-        public string  LlmModel      { get; set; } = "llama3.2";
-        public string? SystemPrompt  { get; set; }
-        public bool    NoRetrieval   { get; set; } = false;
+        public string  LlmModel       { get; set; } = "llama3.2";
+        public string? SystemPrompt   { get; set; }
+        public bool    NoRetrieval    { get; set; } = false;
+        public bool    QueryRewriting { get; set; } = false;
         public List<QuickPrompt> QuickPrompts { get; set; } = [];
     }
 

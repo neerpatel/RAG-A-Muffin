@@ -76,7 +76,19 @@ namespace RagAMuffin.Services
             }
             else
             {
-                var queryVector = await _embedder.EmbedAsync(request.Query, ct);
+                var queryText = request.Query;
+                if (_settings.Current.QueryRewriting)
+                {
+                    var rewritePrompt = $"Rewrite the following question as a concise, keyword-rich search query. Output only the rewritten query, no explanation:\n{request.Query}";
+                    var rewritten = (await _llm.CompleteAsync(rewritePrompt, ct)).Trim();
+                    if (!string.IsNullOrWhiteSpace(rewritten))
+                    {
+                        _logger.LogInformation("Query rewritten: '{Original}' → '{Rewritten}'", request.Query, rewritten);
+                        queryText = rewritten;
+                    }
+                }
+
+                var queryVector = await _embedder.EmbedAsync(queryText, ct);
                 chunks = await ResolveChunksAsync(request, queryVector, ct);
 
                 foreach (var c in chunks)
@@ -180,7 +192,8 @@ namespace RagAMuffin.Services
 
             var context = string.Join("\n\n", chunks.Select((c, i) =>
             {
-                var text = c.Text.Length > 800 ? c.Text[..800] + "…" : c.Text;
+                var raw  = c.ParentText ?? c.Text;
+                var text = raw.Length > 1200 ? raw[..1200] + "…" : raw;
                 var sb = new StringBuilder();
 
                 // Source header varies by type
@@ -212,7 +225,7 @@ namespace RagAMuffin.Services
             }
 
             var systemHeader = string.IsNullOrWhiteSpace(customSystemPrompt)
-                ? $"You are a personal assistant. Today is {today}.\nAnswer the user's question using only the documents provided below.\nWhen a question refers to something from the conversation history, use both the documents and the history to answer.\nBe direct and specific — if the answer is yes/no, lead with that.\nWhen dates or authors matter, mention them in your answer.\nIf the documents don't contain enough information to answer, say so clearly — don't guess."
+                ? $"You are a personal assistant. Today is {today}.\nAnswer the user's question using only the documents provided below.\nWhen a question refers to something from the conversation history, use both the documents and the history to answer.\nBe direct and specific — if the answer is yes/no, lead with that.\nWhen dates or authors matter, mention them in your answer.\nCite sources inline using the document numbers like [1] or [2] wherever you draw on them.\nIf the documents don't contain enough information to answer, say so clearly — don't guess."
                 : customSystemPrompt.Replace("{today}", today);
 
             var documentsSection = chunks.Count > 0 ? $"\n\nDOCUMENTS:\n{context}" : "";

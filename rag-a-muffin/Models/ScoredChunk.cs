@@ -10,6 +10,7 @@ namespace RagAMuffin.Models
         public string? Url { get; init; }
         public required string PublishedAt { get; init; }
         public required string Text { get; init; }
+        public string? ParentText { get; init; }
         // Source-specific extras deserialized from Qdrant payload
         public Dictionary<string, string> Metadata { get; init; } = new();
         public required float Score { get; init; }

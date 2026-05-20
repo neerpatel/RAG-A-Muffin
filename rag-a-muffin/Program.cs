@@ -74,6 +74,10 @@ builder.Services.AddScoped<IConnector, WebConnector>();
 builder.Services.AddScoped<IConnector, GoogleDriveConnector>();
 builder.Services.AddScoped<IConnector, GoogleCalendarConnector>();
 builder.Services.AddScoped<IConnector, LocalDirectoryConnector>();
+builder.Services.AddScoped<IConnector, ObsidianConnector>();
+builder.Services.AddScoped<IConnector, YouTubeConnector>();
+builder.Services.AddScoped<IConnector, GitHubConnector>();
+builder.Services.AddScoped<IConnector, BookmarksConnector>();
 
 // Document extractors — each handles a specific file extension
 builder.Services.AddScoped<IDocumentExtractor, PdfExtractor>();
@@ -658,3 +662,5 @@ app.MapPost("/admin/rebuild", async ctx =>
 app.Run();
 
 record SetupRequest(string Email);
+
+public partial class Program {}
