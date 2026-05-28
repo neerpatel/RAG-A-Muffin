@@ -97,6 +97,18 @@ namespace RagAMuffin.Database
                     SessionId TEXT,
                     CreatedAt TEXT NOT NULL
                 );
+
+                CREATE VIRTUAL TABLE IF NOT EXISTS ChunksFTS USING fts5(
+                    text,
+                    documentId  UNINDEXED,
+                    chunkIndex  UNINDEXED,
+                    sourceType  UNINDEXED,
+                    publishedAt UNINDEXED,
+                    title       UNINDEXED,
+                    author      UNINDEXED,
+                    parentText  UNINDEXED,
+                    tokenize = 'porter unicode61'
+                );
                 """;
             cmd.ExecuteNonQuery();
         }

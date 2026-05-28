@@ -55,6 +55,7 @@ builder.Services.AddScoped<IRagQueryService, RagQueryService>();
 builder.Services.AddSingleton<ChatSessionService>();
 builder.Services.AddSingleton<SettingsService>();
 builder.Services.AddScoped<IVectorStore, QdrantVectorStore>();
+builder.Services.AddSingleton<IFtsStore, FtsSearchService>();
 builder.Services.AddScoped<IChunker>(sp => new TextChunker(sp.GetRequiredService<ILogger<TextChunker>>(), 100, 25));
 builder.Services.AddScoped<IEmailParser, EmailParser>();
 builder.Services.AddScoped<IIngestionPipeline, IngestionPipeline>();
@@ -400,16 +401,18 @@ app.MapGet("/index/documents", async (HttpRequest req, IVectorStore store, Cance
     return Results.Ok(docs);
 });
 
-app.MapDelete("/index/documents/{documentId}", async (string documentId, IVectorStore store, CancellationToken ct) =>
+app.MapDelete("/index/documents/{documentId}", async (string documentId, IVectorStore store, IFtsStore fts, CancellationToken ct) =>
 {
     await store.DeleteByDocumentIdAsync(documentId, ct);
+    await fts.DeleteByDocumentIdAsync(documentId, ct);
     logger.LogInformation("Document deleted from index: {DocumentId}", documentId);
     return Results.Ok(new { deleted = documentId });
 });
 
-app.MapDelete("/index/source/{sourceType}", async (string sourceType, IVectorStore store, CancellationToken ct) =>
+app.MapDelete("/index/source/{sourceType}", async (string sourceType, IVectorStore store, IFtsStore fts, CancellationToken ct) =>
 {
     await store.DeleteBySourceTypeAsync(sourceType, ct);
+    await fts.DeleteBySourceTypeAsync(sourceType, ct);
     logger.LogInformation("All '{SourceType}' documents deleted from index", sourceType);
     return Results.Ok(new { deleted = sourceType });
 });
@@ -582,10 +585,11 @@ app.MapPost("/notes", async (Note note, NoteService noteService, IIngestionPipel
     return Results.Ok(saved);
 });
 
-app.MapDelete("/notes/{id}", async (string id, NoteService noteService, IVectorStore store, CancellationToken ct) =>
+app.MapDelete("/notes/{id}", async (string id, NoteService noteService, IVectorStore store, IFtsStore fts, CancellationToken ct) =>
 {
     noteService.Delete(id);
     await store.DeleteByDocumentIdAsync($"note-{id}", ct);
+    await fts.DeleteByDocumentIdAsync($"note-{id}", ct);
     return Results.Ok(new { deleted = id });
 });
 
@@ -603,6 +607,38 @@ app.MapDelete("/bookmarks/{id}", (string id, BookmarkService bookmarkService) =>
 });
 
 // ── Dev / admin endpoints ─────────────────────────────────────────────────────
+
+app.MapPost("/admin/rebuild-fts", async (IVectorStore qdrant, IFtsStore fts, CancellationToken ct) =>
+{
+    // Clear FTS table entirely then backfill from Qdrant payload
+    using var conn = app.Services.GetRequiredService<AppDatabase>().Open();
+    using var wipe = conn.CreateCommand();
+    wipe.CommandText = "DELETE FROM ChunksFTS";
+    await wipe.ExecuteNonQueryAsync(ct);
+
+    long count = 0;
+    await foreach (var chunk in qdrant.ScrollAllChunksAsync(ct))
+    {
+        await fts.UpsertAsync(new EmbeddedChunk
+        {
+            DocumentId  = chunk.DocumentId,
+            ChunkIndex  = chunk.ChunkIndex,
+            SourceType  = chunk.SourceType,
+            Title       = chunk.Title,
+            Author      = chunk.Author,
+            Recipient   = chunk.Recipient,
+            PublishedAt = DateTime.TryParse(chunk.PublishedAt, out var dt) ? dt : DateTime.UtcNow,
+            Text        = chunk.Text,
+            ParentText  = chunk.ParentText,
+            Vector      = [],
+            TotalChunks = 1
+        }, ct);
+        count++;
+    }
+
+    logger.LogInformation("FTS rebuild complete: {Count} chunks indexed", count);
+    return Results.Ok(new { indexed = count });
+});
 
 app.MapPost("/admin/restart", async ctx =>
 {

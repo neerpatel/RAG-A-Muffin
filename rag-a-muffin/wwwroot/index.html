@@ -3276,6 +3276,15 @@
           </div>
           <button class="btn-dev-action danger" id="btnRebuild" onclick="adminAction('rebuild')">Rebuild &amp; restart</button>
         </div>
+
+        <div class="dev-action-card">
+          <div class="dev-action-name">Rebuild FTS Index</div>
+          <div class="dev-action-desc">
+            Backfills the full-text search index from the existing Qdrant vector store.
+            Run this once after upgrading — new content is indexed automatically going forward.
+          </div>
+          <button class="btn-dev-action" id="btnRebuildFts" onclick="rebuildFts()">Rebuild FTS index</button>
+        </div>
       </div>
     </div>
 
@@ -4547,6 +4556,22 @@
 
   function closeDev() {
     document.getElementById('devPanel').classList.add('hidden');
+  }
+
+  async function rebuildFts() {
+    const btn = document.getElementById('btnRebuildFts');
+    btn.disabled = true;
+    btn.textContent = 'Rebuilding...';
+    try {
+      const res = await fetch(`${API_BASE}/admin/rebuild-fts`, { method: 'POST' });
+      const data = await res.json();
+      showToast(`✓ FTS index rebuilt — ${data.indexed ?? 0} chunks indexed`);
+    } catch (err) {
+      showToast(`FTS rebuild failed: ${err.message}`, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Rebuild FTS index';
+    }
   }
 
   async function adminAction(action) {

@@ -11,6 +11,7 @@ namespace RagAMuffin.Services
     {
         private readonly IEmbeddingService _embedder;
         private readonly IVectorStore _vectorStore;
+        private readonly IFtsStore _ftsStore;
         private readonly ILlmService _llm;
         private readonly SettingsService _settings;
         private readonly ILogger<RagQueryService> _logger;
@@ -18,12 +19,14 @@ namespace RagAMuffin.Services
         public RagQueryService(
             IEmbeddingService embedder,
             IVectorStore vectorStore,
+            IFtsStore ftsStore,
             ILlmService llm,
             SettingsService settings,
             ILogger<RagQueryService> logger)
         {
             _embedder = embedder;
             _vectorStore = vectorStore;
+            _ftsStore = ftsStore;
             _llm = llm;
             _settings = settings;
             _logger = logger;
@@ -34,7 +37,7 @@ namespace RagAMuffin.Services
             _logger.LogInformation("Embedding query: {Question}", request.Query);
             var queryVector = await _embedder.EmbedAsync(request.Query, ct);
 
-            var chunks = await ResolveChunksAsync(request, queryVector, ct);
+            var chunks = await ResolveChunksAsync(request, request.Query, queryVector, ct);
 
             if (chunks.Count == 0)
             {
@@ -76,7 +79,11 @@ namespace RagAMuffin.Services
             }
             else
             {
-                var queryText = request.Query;
+                // Preserve original query for FTS — BM25 needs the user's own words.
+                // Query rewriting only improves the embedding, not keyword recall.
+                var originalQuery = request.Query;
+                var queryText     = request.Query;
+
                 if (_settings.Current.QueryRewriting)
                 {
                     var rewritePrompt = $"Rewrite the following question as a concise, keyword-rich search query. Output only the rewritten query, no explanation:\n{request.Query}";
@@ -89,7 +96,7 @@ namespace RagAMuffin.Services
                 }
 
                 var queryVector = await _embedder.EmbedAsync(queryText, ct);
-                chunks = await ResolveChunksAsync(request, queryVector, ct);
+                chunks = await ResolveChunksAsync(request, originalQuery, queryVector, ct);
 
                 foreach (var c in chunks)
                     _logger.LogInformation("Using: [{SourceType}] '{Title}' Score={Score:F3}",
@@ -134,19 +141,30 @@ namespace RagAMuffin.Services
             yield return $"[CITATIONS]:{citationsJson}";
         }
 
-        private async Task<List<ScoredChunk>> ResolveChunksAsync(QueryRequest request, float[] queryVector, CancellationToken ct)
+        private async Task<List<ScoredChunk>> ResolveChunksAsync(
+            QueryRequest request, string originalQuery, float[] queryVector, CancellationToken ct)
         {
-            var vectorResults = await _vectorStore.SearchAsync(queryVector, request.TopK, request.SourceTypes, request.DateFrom, request.DateTo, ct);
-            _logger.LogInformation("Vector search returned {Count} chunks", vectorResults.Count);
+            // Retrieve a larger candidate pool from each source so RRF has more to work with.
+            int candidateN = request.TopK * 3;
 
-            var (senderName, recipientName) = ExtractPersonFilters(request.Query);
+            var denseTask  = _vectorStore.SearchAsync(queryVector, candidateN, request.SourceTypes, request.DateFrom, request.DateTo, ct);
+            var sparseTask = _ftsStore.SearchAsync(originalQuery, candidateN, request.SourceTypes, request.DateFrom, request.DateTo, ct);
+
+            await Task.WhenAll(denseTask, sparseTask);
+            _logger.LogInformation("Vector search: {Dense} chunks, FTS search: {Sparse} chunks",
+                denseTask.Result.Count, sparseTask.Result.Count);
+
+            var merged = RrfMerger.Merge(denseTask.Result, sparseTask.Result, request.TopK);
+
+            // Person-filter (author/recipient exact match) still prepends high-confidence results.
+            var (senderName, recipientName) = ExtractPersonFilters(originalQuery);
 
             if (senderName != null)
             {
                 _logger.LogInformation("Sender filter detected: '{Name}' — searching 'author' field", senderName);
                 var senderResults = await _vectorStore.SearchByFieldAsync("author", senderName, request.TopK, ct);
                 _logger.LogInformation("Field search found {Count} author matches", senderResults.Count);
-                vectorResults = Merge(senderResults, vectorResults, request.TopK);
+                merged = Merge(senderResults, merged, request.TopK);
             }
 
             if (recipientName != null)
@@ -154,10 +172,10 @@ namespace RagAMuffin.Services
                 _logger.LogInformation("Recipient filter detected: '{Name}' — searching 'recipient' field", recipientName);
                 var recipientResults = await _vectorStore.SearchByFieldAsync("recipient", recipientName, request.TopK, ct);
                 _logger.LogInformation("Field search found {Count} recipient matches", recipientResults.Count);
-                vectorResults = Merge(recipientResults, vectorResults, request.TopK);
+                merged = Merge(recipientResults, merged, request.TopK);
             }
 
-            return vectorResults;
+            return merged;
         }
 
         // Payload-matched results go first (direct answer), then vector results fill remaining slots.

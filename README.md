@@ -18,7 +18,7 @@ A local, privacy-first RAG (Retrieval-Augmented Generation) system that runs on 
 - **100% private** — your data never leaves your device. No cloud uploads, no third-party APIs processing your personal information.
 - **Local AI** — uses [Ollama](https://ollama.com) for on-device LLM inference and embeddings. Models run entirely locally.
 - **Multi-source** — Gmail, Drive, Calendar, RSS feeds, web scraping, local directories, Obsidian vaults, YouTube transcripts, GitHub repos, browser bookmarks, file uploads, and a watch folder all feed into one searchable index.
-- **Smarter retrieval** — parent-document context windows, optional query rewriting, and inline `[1]` `[2]` citations in every answer.
+- **Smarter retrieval** — hybrid BM25 + vector search with Reciprocal Rank Fusion, parent-document context windows, optional query rewriting, and inline `[1]` `[2]` citations in every answer.
 - **Homelab-friendly** — designed to run on Raspberry Pi and other resource-constrained devices. GPU acceleration available for NVIDIA and AMD cards.
 
 ---
@@ -250,19 +250,33 @@ Create and edit personal notes directly in the app — open **Notes** from the `
 Type a question in the chat input and press Enter. The app:
 
 1. Optionally rewrites your query into a keyword-rich search query (if **Query Rewriting** is enabled in Sources)
-2. Embeds the query with `nomic-embed-text`
-3. Searches the vector store for the most relevant chunks, retrieving a larger surrounding context window for each match (parent-document retrieval)
-4. Streams an answer from the LLM using those chunks as context
-5. Cites sources inline with `[1]`, `[2]` markers — clicking a marker scrolls to and highlights the matching source card
-6. Shows clickable **source cards** below the answer — tap any card to preview the matched text
+2. Runs **two searches in parallel**: dense vector search (Qdrant) using the embedded query, and BM25 keyword search (SQLite FTS5) using the original query
+3. Merges both result lists with **Reciprocal Rank Fusion (RRF)** — chunks that score well in both searches rise to the top
+4. Retrieves a larger surrounding context window for each matched chunk (parent-document retrieval)
+5. Streams an answer from the LLM using those chunks as context
+6. Cites sources inline with `[1]`, `[2]` markers — clicking a marker scrolls to and highlights the matching source card
+7. Shows clickable **source cards** below the answer — tap any card to preview the matched text
 
 ### Inline citations
 
 The LLM is instructed to cite sources using `[N]` markers wherever it draws on indexed content. After the response streams in, each marker becomes a clickable link that jumps to and highlights the corresponding source card at the bottom of the message.
 
+### Hybrid search
+
+Every query runs two retrieval passes simultaneously:
+
+- **Dense (semantic)** — the query is embedded with `nomic-embed-text` and compared against Qdrant vectors. Finds conceptually similar content even when you use different words.
+- **Sparse (keyword / BM25)** — the original query is matched against a SQLite FTS5 index with Porter stemming. Finds exact names, identifiers, technical terms, and dates that embeddings tend to miss.
+
+Results from both passes are merged with **Reciprocal Rank Fusion** (RRF, k=60): chunks that rank highly in both lists score highest, while chunks that only appear in one list are still surfaced. The combined ranking is used to select the final context window sent to the LLM.
+
+This is the current industry baseline for RAG retrieval quality and requires no configuration — it is always on.
+
+> **First-time upgrade note:** If you have existing indexed data from v2.0.0, click **Rebuild FTS Index** in Dev Tools once to backfill the keyword index. New ingestion is automatically dual-write going forward.
+
 ### Query rewriting
 
-Enable **Query Rewriting** in the Sources panel. Before embedding, the LLM rewrites your question into a precise, keyword-rich search query. Useful when your phrasing is vague or conversational and you want better recall from the vector store.
+Enable **Query Rewriting** in the Sources panel. Before embedding, the LLM rewrites your question into a precise, keyword-rich search query. Useful when your phrasing is vague or conversational and you want better recall from the vector store. Query rewriting applies to the embedding path only — the original query is always sent to BM25.
 
 ### Parent-document retrieval
 
@@ -385,6 +399,7 @@ Open **Dev Tools** from the `⋯` overflow menu:
 
 - **Restart** — exit and let Docker's `restart: unless-stopped` bring the container back up with the same image. Use this after changing `appsettings.json` or environment variables.
 - **Rebuild** — compile a new image from source and restart. Use this after changing C# or frontend code. The UI shows a reconnecting spinner and resumes automatically.
+- **Rebuild FTS Index** — scrolls all Qdrant vectors and backfills the SQLite FTS5 keyword index. Run this once after upgrading from v2.0.0. Reports the number of chunks indexed when complete.
 
 ---
 
@@ -455,24 +470,25 @@ docker compose -f docker-compose.yml -f docker-compose.amd.yml up -d
 │  │  Citations   │  │  RSS / Web / Local        │  │  Parent ctx  │  │
 │  │  Source chips│  │  Obsidian / YouTube       │  │  Embedder    │  │
 │  │  Sources mgr │  │  GitHub / Bookmarks       │  │  Dedup       │  │
-│  └──────────────┘  │  File Upload / Watch      │  │  Upsert      │  │
+│  └──────────────┘  │  File Upload / Watch      │  │  Upsert ×2   │  │
 │                    └───────────────────────────┘  └──────────────┘  │
 │                                                                      │
 │  ┌──────────────────────────────────────────────────────────────┐    │
 │  │  SQLite (./data/app.db)                                      │    │
 │  │  ChatSessions · ChatMessages · Notes · Bookmarks            │    │
 │  │  KV (connector config, settings) · SyncLog                  │    │
-│  └──────────────────────────────────────────────────────────────┘    │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                ┌──────────────┴──────────────┐
-                ▼                             ▼
-          ┌───────────┐               ┌─────────────┐
-          │  Qdrant   │               │   Ollama    │
-          │  Vector   │               │  llama3     │
-          │  Database │               │  nomic-     │
-          │           │               │  embed-text │
-          └───────────┘               └─────────────┘
+│  │  ChunksFTS (FTS5 · BM25 · porter stemming)                  │    │
+│  └────────────────────────────┬─────────────────────────────────┘    │
+└────────────────────────────┬──┼──────────────────────────────────────┘
+                             │  │ parallel retrieval + RRF merge
+                ┌────────────┘  └────────────────┐
+                ▼                                ▼
+          ┌───────────┐                   ┌─────────────┐
+          │  Qdrant   │                   │   Ollama    │
+          │  Vector   │                   │  llama3     │
+          │  Database │                   │  nomic-     │
+          │  (dense)  │                   │  embed-text │
+          └───────────┘                   └─────────────┘
 ```
 
 **Models used:**
@@ -573,6 +589,7 @@ All persistent data lives in `./data/` on the host:
 | `DELETE` | `/bookmarks/{id}` | Delete a saved answer |
 | `POST` | `/admin/restart` | Exit the process; Docker restarts the container |
 | `POST` | `/admin/rebuild` | Build a new image from source, then restart |
+| `POST` | `/admin/rebuild-fts` | Backfill FTS5 index from Qdrant; returns `{ "indexed": N }` |
 
 Swagger UI is available at **http://localhost:8000/swagger** in development mode.
 
@@ -601,6 +618,8 @@ rag-a-muffin/
 │   └── QdrantInitializer.cs
 ├── Services/
 │   ├── Interfaces/
+│   │   ├── IVectorStore.cs
+│   │   └── IFtsStore.cs             # BM25 / FTS5 search contract
 │   ├── Connectors/
 │   │   ├── GmailConnector.cs
 │   │   ├── GoogleDriveConnector.cs
@@ -625,7 +644,9 @@ rag-a-muffin/
 │   ├── FileWatcherService.cs
 │   ├── FileIngestionService.cs
 │   ├── IngestionPipeline.cs
-│   ├── RagQueryService.cs          # Query rewriting + inline citation prompt
+│   ├── FtsSearchService.cs         # SQLite FTS5 BM25 keyword search
+│   ├── RrfMerger.cs                # Reciprocal Rank Fusion merge utility
+│   ├── RagQueryService.cs          # Hybrid retrieval, query rewriting, citations
 │   ├── QdrantService.cs
 │   └── UserProfileService.cs
 ├── wwwroot/
@@ -638,7 +659,9 @@ rag-a-muffin/
 rag-a-muffin.Tests/
 ├── ChunkerTests.cs                 # TextChunker unit tests incl. parent window
 ├── ObsidianConnectorTests.cs       # Frontmatter, wikilink, tag parsing
-└── ChatSessionServiceTests.cs      # CRUD + search against in-memory SQLite
+├── ChatSessionServiceTests.cs      # CRUD + search against in-memory SQLite
+├── FtsSearchServiceTests.cs        # FtsSearchService integration tests (in-memory SQLite)
+└── RrfMergerTests.cs               # RRF merge unit tests
 ```
 
 ---
@@ -674,7 +697,7 @@ You can also trigger a rebuild from the browser via **Dev Tools → Rebuild** in
 dotnet test rag-a-muffin.Tests/
 ```
 
-The test suite uses in-memory SQLite — no Docker or running services required.
+The test suite uses in-memory SQLite — no Docker or running services required. 34 tests total.
 
 ### Tail logs per service
 

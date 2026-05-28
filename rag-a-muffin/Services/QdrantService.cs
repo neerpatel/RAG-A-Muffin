@@ -325,16 +325,46 @@ namespace RagAMuffin.Services
             };
         }
 
+        public async IAsyncEnumerable<ScoredChunk> ScrollAllChunksAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            PointId? offset = null;
+            const uint batchSize = 500;
+
+            do
+            {
+                var result = await _client.ScrollAsync(
+                    CollectionName,
+                    null,
+                    batchSize,
+                    offset,
+                    (WithPayloadSelector)true,
+                    null,
+                    null,
+                    null,
+                    null,
+                    ct);
+
+                foreach (var point in result.Result)
+                    yield return MapPayload(point.Payload, 1.0f);
+
+                offset = result.NextPageOffset;
+            }
+            while (offset is not null);
+        }
+
         private static ScoredChunk MapPayload(MapField<string, Value> payload, float score)
         {
             var metadataRaw = payload.TryGetValue("metadata", out var m) ? m.StringValue : "{}";
             var metadata = JsonSerializer.Deserialize<Dictionary<string, string>>(metadataRaw) ?? new();
 
-            var parentRaw = payload.TryGetValue("parentText", out var pt) ? pt.StringValue : null;
+            var parentRaw   = payload.TryGetValue("parentText", out var pt) ? pt.StringValue : null;
+            var chunkIndex  = payload.TryGetValue("chunkIndex", out var ci) ? (int)ci.IntegerValue : 0;
 
             return new ScoredChunk
             {
                 DocumentId  = payload["documentId"].StringValue,
+                ChunkIndex  = chunkIndex,
                 SourceType  = payload["sourceType"].StringValue,
                 Title       = payload["title"].StringValue,
                 Author      = payload["author"].StringValue,

@@ -10,17 +10,20 @@ namespace RagAMuffin.Services
         private readonly IChunker _chunker;
         private readonly IEmbeddingService _embedder;
         private readonly IVectorStore _vectorStore;
+        private readonly IFtsStore _ftsStore;
 
         public IngestionPipeline(
             ILogger<IngestionPipeline> logger,
             IChunker chunker,
             IEmbeddingService embedder,
-            IVectorStore vectorStore)
+            IVectorStore vectorStore,
+            IFtsStore ftsStore)
         {
             _logger = logger;
             _chunker = chunker;
             _embedder = embedder;
             _vectorStore = vectorStore;
+            _ftsStore = ftsStore;
         }
 
         public async Task IngestAsync(IEnumerable<SourceDocument> documents, CancellationToken ct = default)
@@ -55,7 +58,7 @@ namespace RagAMuffin.Services
                         continue;
                     }
 
-                    await _vectorStore.UpsertAsync(new EmbeddedChunk
+                    var embedded = new EmbeddedChunk
                     {
                         DocumentId  = doc.Id,
                         SourceType  = doc.SourceType,
@@ -71,7 +74,9 @@ namespace RagAMuffin.Services
                         Text        = chunk.Text,
                         ParentText  = chunk.ParentText,
                         Vector      = vector
-                    }, ct);
+                    };
+                    await _vectorStore.UpsertAsync(embedded, ct);
+                    await _ftsStore.UpsertAsync(embedded, ct);
                 }
             }
         }
