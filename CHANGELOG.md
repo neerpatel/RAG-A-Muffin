@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.1.0] - 2026-05-23
+
+### Added
+- **Hybrid BM25 + vector search** — every query now runs a dense vector search (Qdrant) and a BM25 keyword search (SQLite FTS5) in parallel; results are merged with Reciprocal Rank Fusion (RRF, k=60). Exact names, identifiers, and technical terms that embeddings miss are now reliably surfaced.
+- **SQLite FTS5 index** — a `ChunksFTS` virtual table with Porter stemming (`porter unicode61`) is created automatically in `./data/app.db`. New ingestion writes to both Qdrant and FTS5 simultaneously; no configuration required.
+- **Rebuild FTS Index** button in Dev Tools — one-click backfill from existing Qdrant data into FTS5. Required once after upgrading from v2.0.0; subsequent ingestion is automatically dual-write.
+- `POST /admin/rebuild-fts` API endpoint — scrolls all Qdrant points and re-indexes them into FTS5; returns `{ "indexed": N }`.
+- `RrfMerger` unit tests (7) and `FtsSearchService` integration tests (8) against in-memory SQLite — test suite now 34 tests total.
+
+### Changed
+- Query rewriting now applies to the embedding path only; the original user query is sent to BM25 to preserve exact term matching.
+
+---
+
 ## [2.0.0] - 2026-05-20
 
 ### Added

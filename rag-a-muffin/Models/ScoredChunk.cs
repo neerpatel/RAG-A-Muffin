@@ -3,6 +3,7 @@ namespace RagAMuffin.Models
     public class ScoredChunk
     {
         public required string DocumentId { get; init; }
+        public int ChunkIndex { get; init; } = 0;
         public required string SourceType { get; init; }
         public required string Title { get; init; }
         public required string Author { get; init; }

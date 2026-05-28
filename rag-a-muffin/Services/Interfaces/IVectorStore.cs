@@ -14,5 +14,6 @@ namespace RagAMuffin.Services.Interfaces
         Task<List<ScoredChunk>> GetChunksAsync(string documentId, CancellationToken ct = default);
         Task<List<DocumentSummary>> ListDocumentsAsync(string? sourceType = null, CancellationToken ct = default);
         Task<IndexStats> GetStatsAsync(CancellationToken ct = default);
+        IAsyncEnumerable<ScoredChunk> ScrollAllChunksAsync(CancellationToken ct = default);
     }
 }
