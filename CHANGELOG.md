@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.1.1] - 2026-05-29
+
+### Fixed
+- `credentials.json` is now read from `./data/credentials.json` first, falling back to the repo root. Eliminates a Docker Desktop on Windows permission error caused by single-file bind mounts with restrictive Windows ACLs. Move your existing file into `./data/` and rebuild.
+
+---
+
 ## [2.1.0] - 2026-05-23
 
 ### Added
