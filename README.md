@@ -346,7 +346,23 @@ Set the background sync frequency from the Sources panel (0 = disabled, or any p
 
 ### LLM model
 
-The Sources panel includes a **Model** dropdown populated from Ollama's available models. Select any model you've pulled with `ollama pull <model>` and it takes effect on the next query. The choice is persisted to `./data/app.db`.
+The Sources panel includes a **Model** dropdown populated from Ollama's available models. Select any model and it takes effect on the next query — no restart required. The choice is persisted to `./data/app.db`.
+
+To add a new model, pull it directly into the running Ollama container:
+
+```bash
+docker compose exec ollama ollama pull <model-name>
+```
+
+For example:
+
+```bash
+docker compose exec ollama ollama pull mistral
+docker compose exec ollama ollama pull llama3.1
+docker compose exec ollama ollama pull gemma3
+```
+
+The model appears in the dropdown immediately after the pull completes. Browse available models at [ollama.com/library](https://ollama.com/library).
 
 ### Manual sync
 
