@@ -4142,7 +4142,7 @@
     const syncNote = `Auto-syncs every ${s.syncInterval} minute${s.syncInterval !== 1 ? 's' : ''}`;
 
     const reAuthAction = !google && hasUser
-      ? `<span class="status-action" onclick="reAuthGoogle(${JSON.stringify(s.user?.email ?? '')})">Re-authorize Google</span>`
+      ? `<span class="status-action" onclick="reAuthGoogle('${s.user?.email ?? ''}')">Re-authorize Google</span>`
       : '';
 
     const rssState  = s.rssFeeds  > 0 ? 'active' : 'inactive';

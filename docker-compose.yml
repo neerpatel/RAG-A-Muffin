@@ -42,8 +42,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # lets the app trigger restart/rebuild
       - .:/workspace:ro                             # build context for rebuild
-      - ./credentials.json:/app/credentials.json
-      - ./data:/app/data                            # persists connectors.json, tokens, uploads, watch
+      - ./data:/app/data                            # persists app.db, tokens, uploads, watch, credentials.json
 
 volumes:
   qdrant_data:

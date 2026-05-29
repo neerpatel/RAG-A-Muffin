@@ -13,10 +13,13 @@ namespace RagAMuffin.Auth
     public static class GoogleAuth
     {
         private const string TokenStoreFolder = "/app/data/tokens";
+        private const string CredentialsPath  = "/app/data/credentials.json";
 
         private static async Task<GoogleAuthorizationCodeFlow> CreateFlowAsync()
         {
-            var credentialsPath = Path.Combine(AppContext.BaseDirectory, "credentials.json");
+            var credentialsPath = File.Exists(CredentialsPath)
+                ? CredentialsPath
+                : Path.Combine(AppContext.BaseDirectory, "credentials.json");
             await using var stream = new FileStream(credentialsPath, FileMode.Open, FileAccess.Read);
             var secrets = GoogleClientSecrets.FromStream(stream).Secrets;
 

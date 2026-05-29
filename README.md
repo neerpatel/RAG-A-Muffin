@@ -35,7 +35,8 @@ A local, privacy-first RAG (Retrieval-Augmented Generation) system that runs on 
 ```bash
 git clone https://github.com/youruser/rag-a-muffin.git
 cd rag-a-muffin
-# Place your credentials.json here (see Google Setup)
+mkdir -p data
+# Place your credentials.json in ./data/ (see Google Setup)
 ```
 
 ### 2. Start everything
@@ -110,7 +111,7 @@ In **APIs & Services → Library**, enable all three:
 1. Go to **APIs & Services → Credentials → Create Credentials → OAuth client ID**.
 2. Select **Desktop app** as the application type.
 3. Click **Create**, then **Download JSON**.
-4. Rename the file to `credentials.json` and place it in the repo root (next to `docker-compose.yml`).
+4. Rename the file to `credentials.json` and place it in the `./data/` folder (next to `app.db`). Create the folder if it doesn't exist yet.
 
 ### Step 5 — Authorize in the UI
 
@@ -537,6 +538,7 @@ All persistent data lives in `./data/` on the host:
 | Path | Contents |
 |---|---|
 | `./data/app.db` | SQLite — chat sessions, connector config, settings, sync log, notes, bookmarks |
+| `./data/credentials.json` | Google OAuth client credentials (place here before first run) |
 | `./data/tokens/` | Google OAuth refresh tokens |
 | `./data/uploads/` | Uploaded files |
 | `./data/watch/` | Watch folder (drop files here for auto-ingestion) |
